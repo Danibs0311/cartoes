@@ -9,6 +9,7 @@ import { EditCardModal } from '@/components/EditCardModal';
 import { EditPersonModal } from '@/components/EditPersonModal';
 import { EditInstallmentModal } from '@/components/EditInstallmentModal';
 import { UploadModal } from '@/components/UploadModal';
+import { SplitPurchaseModal } from '@/components/SplitPurchaseModal';
 
 export default function HomePage() {
   // Estado de Dados
@@ -39,6 +40,10 @@ export default function HomePage() {
     person: null,
   });
   const [installmentModalData, setInstallmentModalData] = useState<{
+    isOpen: boolean;
+    installment: Installment | null;
+  }>({ isOpen: false, installment: null });
+  const [splitModalData, setSplitModalData] = useState<{
     isOpen: boolean;
     installment: Installment | null;
   }>({ isOpen: false, installment: null });
@@ -286,6 +291,60 @@ export default function HomePage() {
     saveInstallments([...installments, ...newItems]);
   };
 
+  // 6. Dividir Compra entre 2 ou mais pessoas
+  const handleConfirmSplit = (
+    originalInstallment: Installment,
+    splits: Array<{ person_id: string; amount: number; person_name: string }>,
+    applyToFuture: boolean
+  ) => {
+    const newFracionadas: Installment[] = splits.map((s, index) => ({
+      id: `inst_split_${Date.now()}_${index}`,
+      invoice_id: originalInstallment.invoice_id,
+      purchase_id: originalInstallment.purchase_id,
+      person_id: s.person_id,
+      description: `${originalInstallment.description} (${s.person_name})`,
+      amount: s.amount,
+      installment_number: originalInstallment.installment_number,
+      total_installments: originalInstallment.total_installments,
+      status: originalInstallment.status,
+      purchase_date: originalInstallment.purchase_date,
+      notes: originalInstallment.notes,
+    }));
+
+    let updatedList = installments.filter((i) => i.id !== originalInstallment.id);
+
+    if (applyToFuture && originalInstallment.purchase_id) {
+      const futureItems = updatedList.filter(
+        (i) =>
+          i.purchase_id === originalInstallment.purchase_id &&
+          i.installment_number > originalInstallment.installment_number
+      );
+
+      const futureIdsToRemove = new Set(futureItems.map((f) => f.id));
+      updatedList = updatedList.filter((i) => !futureIdsToRemove.has(i.id));
+
+      futureItems.forEach((futItem) => {
+        splits.forEach((s, sIdx) => {
+          newFracionadas.push({
+            id: `inst_split_fut_${futItem.id}_${sIdx}`,
+            invoice_id: futItem.invoice_id,
+            purchase_id: futItem.purchase_id,
+            person_id: s.person_id,
+            description: `${futItem.description} (${s.person_name})`,
+            amount: s.amount,
+            installment_number: futItem.installment_number,
+            total_installments: futItem.total_installments,
+            status: futItem.status,
+            purchase_date: futItem.purchase_date,
+            notes: futItem.notes,
+          });
+        });
+      });
+    }
+
+    saveInstallments([...updatedList, ...newFracionadas]);
+  };
+
   return (
     <div className="flex h-screen w-full bg-slate-950 overflow-hidden">
       {/* Sidebar com Menu Hambúrguer */}
@@ -321,6 +380,7 @@ export default function HomePage() {
           onOpenManagePeople={() => setPersonModalData({ isOpen: true, person: null })}
           onOpenNewPerson={() => setPersonModalData({ isOpen: true, person: 'new' })}
           onEditPerson={(person) => setPersonModalData({ isOpen: true, person })}
+          onOpenSplitInstallment={(inst) => setSplitModalData({ isOpen: true, installment: inst })}
         />
       </div>
 
@@ -359,6 +419,15 @@ export default function HomePage() {
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
         onConfirmImport={handleConfirmImport}
+      />
+
+      <SplitPurchaseModal
+        installment={splitModalData.installment}
+        people={people}
+        isOpen={splitModalData.isOpen}
+        onClose={() => setSplitModalData({ isOpen: false, installment: null })}
+        onConfirmSplit={handleConfirmSplit}
+        onOpenNewPerson={() => setPersonModalData({ isOpen: true, person: 'new' })}
       />
     </div>
   );

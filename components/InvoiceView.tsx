@@ -11,6 +11,7 @@ import {
   Edit2,
   Trash2,
   Share2,
+  Scissors,
   AlertTriangle,
   CheckCircle,
   Calendar,
@@ -41,6 +42,7 @@ interface InvoiceViewProps {
   onOpenManagePeople: () => void;
   onOpenNewPerson: () => void;
   onEditPerson: (person: Person) => void;
+  onOpenSplitInstallment: (inst: Installment) => void;
 }
 
 const MONTH_NAMES = [
@@ -66,6 +68,7 @@ export function InvoiceView({
   onOpenManagePeople,
   onOpenNewPerson,
   onEditPerson,
+  onOpenSplitInstallment,
 }: InvoiceViewProps) {
   const [editingTotal, setEditingTotal] = useState(false);
   const [tempTotal, setTempTotal] = useState(String(invoice.total_bank_amount));
@@ -374,6 +377,14 @@ export function InvoiceView({
                     </button>
 
                     <button
+                      onClick={() => onOpenSplitInstallment(item)}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-400 border border-slate-700 rounded-lg transition"
+                      title="Dividir / Rachar esta compra entre 2 ou mais pessoas"
+                    >
+                      <Scissors size={14} />
+                    </button>
+
+                    <button
                       onClick={() => onOpenEditInstallment(item)}
                       className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg"
                       title="Editar lançamento"
@@ -507,6 +518,13 @@ export function InvoiceView({
                               {formatCurrency(item.amount)}
                             </span>
                             <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => onOpenSplitInstallment(item)}
+                                className="p-1 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded transition"
+                                title="Dividir / Rachar compra"
+                              >
+                                <Scissors size={13} />
+                              </button>
                               <button
                                 onClick={() => onOpenEditInstallment(item)}
                                 className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded"
