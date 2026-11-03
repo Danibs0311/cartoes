@@ -11,6 +11,7 @@ interface EditInstallmentModalProps {
   onClose: () => void;
   onSave: (updated: Partial<Installment>) => void;
   onDelete?: (id: string) => void;
+  onOpenNewPerson?: () => void;
 }
 
 export function EditInstallmentModal({
@@ -20,6 +21,7 @@ export function EditInstallmentModal({
   onClose,
   onSave,
   onDelete,
+  onOpenNewPerson,
 }: EditInstallmentModalProps) {
   const [description, setDescription] = useState('');
   const [personId, setPersonId] = useState<string>('');
@@ -98,9 +100,20 @@ export function EditInstallmentModal({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold uppercase text-slate-400 mb-1">
-              Comprador Responsável
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-semibold uppercase text-slate-400">
+                Comprador Responsável
+              </label>
+              {onOpenNewPerson && (
+                <button
+                  type="button"
+                  onClick={onOpenNewPerson}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center gap-1 font-medium transition"
+                >
+                  + Novo Comprador
+                </button>
+              )}
+            </div>
             <select
               value={personId}
               onChange={(e) => setPersonId(e.target.value)}

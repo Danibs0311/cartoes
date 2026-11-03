@@ -7,16 +7,45 @@ import { X, Plus, Edit2, Trash2, User, Phone, Check } from 'lucide-react';
 interface EditPersonModalProps {
   people: Person[];
   isOpen: boolean;
+  initialPerson?: Person | 'new' | null;
   onClose: () => void;
   onSavePeople: (updatedList: Person[]) => void;
 }
 
-export function EditPersonModal({ people, isOpen, onClose, onSavePeople }: EditPersonModalProps) {
+export function EditPersonModal({
+  people,
+  isOpen,
+  initialPerson = null,
+  onClose,
+  onSavePeople,
+}: EditPersonModalProps) {
   const [editingPersonId, setEditingPersonId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [color, setColor] = useState('#10B981');
   const [notes, setNotes] = useState('');
+
+  React.useEffect(() => {
+    if (!isOpen) {
+      setEditingPersonId(null);
+      return;
+    }
+    if (initialPerson === 'new') {
+      setEditingPersonId('new');
+      setName('');
+      setPhone('');
+      setColor('#' + Math.floor(Math.random() * 16777215).toString(16).padStart(6, '0'));
+      setNotes('');
+    } else if (initialPerson) {
+      setEditingPersonId(initialPerson.id);
+      setName(initialPerson.name);
+      setPhone(initialPerson.phone || '');
+      setColor(initialPerson.color || '#10B981');
+      setNotes(initialPerson.notes || '');
+    } else {
+      setEditingPersonId(null);
+    }
+  }, [isOpen, initialPerson]);
 
   if (!isOpen) return null;
 

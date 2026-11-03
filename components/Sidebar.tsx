@@ -12,6 +12,7 @@ interface SidebarProps {
   people: Person[];
   onOpenEditCard: (card: CreditCard | null) => void;
   onOpenManagePeople: () => void;
+  onOpenNewPerson: () => void;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
 }
@@ -23,6 +24,7 @@ export function Sidebar({
   people,
   onOpenEditCard,
   onOpenManagePeople,
+  onOpenNewPerson,
   isOpenMobile,
   onCloseMobile,
 }: SidebarProps) {
@@ -84,6 +86,40 @@ export function Sidebar({
               placeholder="Buscar cartão..."
               className="w-full bg-slate-950/60 border border-slate-800 rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
             />
+          </div>
+        </div>
+
+        {/* Acesso rápido aos Devedores */}
+        <div className="p-3 border-b border-slate-800/60 bg-slate-950/20">
+          <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/50 border border-slate-750">
+            <button
+              onClick={() => {
+                onOpenManagePeople();
+                onCloseMobile();
+              }}
+              className="flex items-center gap-2 text-left hover:text-white transition group"
+            >
+              <Users size={16} className="text-emerald-400 group-hover:scale-110 transition" />
+              <div>
+                <p className="text-xs font-bold text-slate-200 group-hover:text-emerald-300">
+                  Devedores Cadastrados
+                </p>
+                <p className="text-[10px] text-slate-400">
+                  {people.length} pessoas registradas
+                </p>
+              </div>
+            </button>
+
+            <button
+              onClick={() => {
+                onOpenNewPerson();
+                onCloseMobile();
+              }}
+              className="p-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-medium flex items-center gap-1 transition"
+              title="Adicionar Novo Comprador"
+            >
+              <Plus size={14} /> Novo
+            </button>
           </div>
         </div>
 

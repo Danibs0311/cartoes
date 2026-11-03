@@ -16,6 +16,7 @@ import {
   Calendar,
   CreditCard as CardIcon,
   User,
+  Users,
   Clock,
   ExternalLink,
   MessageCircle,
@@ -37,6 +38,9 @@ interface InvoiceViewProps {
   onAssignDebtor: (installmentId: string, personId: string) => void;
   onUpdateInvoiceTotal: (newTotal: number) => void;
   onChangeMonth: (delta: number) => void;
+  onOpenManagePeople: () => void;
+  onOpenNewPerson: () => void;
+  onEditPerson: (person: Person) => void;
 }
 
 const MONTH_NAMES = [
@@ -59,6 +63,9 @@ export function InvoiceView({
   onAssignDebtor,
   onUpdateInvoiceTotal,
   onChangeMonth,
+  onOpenManagePeople,
+  onOpenNewPerson,
+  onEditPerson,
 }: InvoiceViewProps) {
   const [editingTotal, setEditingTotal] = useState(false);
   const [tempTotal, setTempTotal] = useState(String(invoice.total_bank_amount));
@@ -159,6 +166,17 @@ export function InvoiceView({
 
         {/* Ações principais */}
         <div className="flex items-center gap-2">
+          <button
+            onClick={onOpenManagePeople}
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm font-medium rounded-xl border border-slate-700 flex items-center gap-1.5 transition"
+            title="Gerenciar lista de devedores"
+          >
+            <Users size={16} className="text-emerald-400" />
+            <span className="hidden sm:inline">Devedores</span>
+            <span className="bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 text-[10px] font-bold rounded-md">
+              {people.length}
+            </span>
+          </button>
           <button
             onClick={onOpenNewInstallment}
             className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs sm:text-sm font-medium rounded-xl border border-slate-700 flex items-center gap-1.5 transition"
@@ -330,7 +348,9 @@ export function InvoiceView({
                     <select
                       defaultValue=""
                       onChange={(e) => {
-                        if (e.target.value) {
+                        if (e.target.value === 'ADD_NEW_PERSON') {
+                          onOpenNewPerson();
+                        } else if (e.target.value) {
                           onAssignDebtor(item.id, e.target.value);
                         }
                       }}
@@ -342,7 +362,16 @@ export function InvoiceView({
                           👤 {p.name}
                         </option>
                       ))}
+                      <option value="ADD_NEW_PERSON">➕ Cadastrar Novo Comprador...</option>
                     </select>
+
+                    <button
+                      onClick={onOpenNewPerson}
+                      className="p-1.5 bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 rounded-lg transition"
+                      title="Adicionar Novo Comprador"
+                    >
+                      <Plus size={14} />
+                    </button>
 
                     <button
                       onClick={() => onOpenEditInstallment(item)}
@@ -372,9 +401,17 @@ export function InvoiceView({
               <User size={16} className="text-indigo-400" />
               Divisão por Devedor nesta Fatura
             </h3>
-            <span className="text-xs text-slate-500">
-              {groupedByPerson.length} pessoas com gastos
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-500 hidden sm:inline">
+                {groupedByPerson.length} pessoas com gastos
+              </span>
+              <button
+                onClick={onOpenNewPerson}
+                className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+              >
+                <Plus size={13} /> Novo Devedor
+              </button>
+            </div>
           </div>
 
           {groupedByPerson.length === 0 && unassignedItems.length === 0 ? (
@@ -415,9 +452,18 @@ export function InvoiceView({
                           style={{ backgroundColor: group.person.color || '#10B981' }}
                         />
                         <div>
-                          <h4 className="font-bold text-white text-base leading-tight">
-                            {group.person.name}
-                          </h4>
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="font-bold text-white text-base leading-tight">
+                              {group.person.name}
+                            </h4>
+                            <button
+                              onClick={() => onEditPerson(group.person)}
+                              className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition"
+                              title="Editar dados deste devedor"
+                            >
+                              <Edit2 size={13} />
+                            </button>
+                          </div>
                           {group.person.phone && (
                             <p className="text-[11px] text-slate-400">
                               Tel: {group.person.phone}

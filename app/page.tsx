@@ -31,7 +31,13 @@ export default function HomePage() {
     isOpen: false,
     card: null,
   });
-  const [isPersonModalOpen, setIsPersonModalOpen] = useState(false);
+  const [personModalData, setPersonModalData] = useState<{
+    isOpen: boolean;
+    person: Person | 'new' | null;
+  }>({
+    isOpen: false,
+    person: null,
+  });
   const [installmentModalData, setInstallmentModalData] = useState<{
     isOpen: boolean;
     installment: Installment | null;
@@ -289,7 +295,8 @@ export default function HomePage() {
         onSelectCard={(id) => setSelectedCardId(id)}
         people={people}
         onOpenEditCard={(card) => setCardModalData({ isOpen: true, card })}
-        onOpenManagePeople={() => setIsPersonModalOpen(true)}
+        onOpenManagePeople={() => setPersonModalData({ isOpen: true, person: null })}
+        onOpenNewPerson={() => setPersonModalData({ isOpen: true, person: 'new' })}
         isOpenMobile={isMobileMenuOpen}
         onCloseMobile={() => setIsMobileMenuOpen(false)}
       />
@@ -311,6 +318,9 @@ export default function HomePage() {
           onAssignDebtor={handleAssignDebtor}
           onUpdateInvoiceTotal={handleUpdateInvoiceTotal}
           onChangeMonth={handleChangeMonth}
+          onOpenManagePeople={() => setPersonModalData({ isOpen: true, person: null })}
+          onOpenNewPerson={() => setPersonModalData({ isOpen: true, person: 'new' })}
+          onEditPerson={(person) => setPersonModalData({ isOpen: true, person })}
         />
       </div>
 
@@ -325,8 +335,9 @@ export default function HomePage() {
 
       <EditPersonModal
         people={people}
-        isOpen={isPersonModalOpen}
-        onClose={() => setIsPersonModalOpen(false)}
+        isOpen={personModalData.isOpen}
+        initialPerson={personModalData.person}
+        onClose={() => setPersonModalData({ isOpen: false, person: null })}
         onSavePeople={savePeople}
       />
 
@@ -337,6 +348,7 @@ export default function HomePage() {
         onClose={() => setInstallmentModalData({ isOpen: false, installment: null })}
         onSave={handleSaveInstallment}
         onDelete={handleDeleteInstallment}
+        onOpenNewPerson={() => setPersonModalData({ isOpen: true, person: 'new' })}
       />
 
       <UploadModal
