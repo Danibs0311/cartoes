@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
+import { PDFDocument } from '@cantoo/pdf-lib';
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,14 +15,48 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const file = formData.get('file') as File | null;
     const cardName = (formData.get('cardName') as string) || '';
+    const password = (formData.get('password') as string) || '';
 
     if (!file) {
       return NextResponse.json({ error: 'Nenhum arquivo enviado.' }, { status: 400 });
     }
 
     const arrayBuffer = await file.arrayBuffer();
-    const base64Data = Buffer.from(arrayBuffer).toString('base64');
-    const mimeType = file.type || 'application/pdf';
+    let base64Data = Buffer.from(arrayBuffer).toString('base64');
+    let mimeType = file.type || 'application/pdf';
+
+    // Desbloqueio de PDF com senha
+    if (file.name.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf')) {
+      try {
+        const pdfDoc = await PDFDocument.load(arrayBuffer, {
+          password: password.trim() || undefined,
+        });
+        const unencryptedBytes = await pdfDoc.save();
+        base64Data = Buffer.from(unencryptedBytes).toString('base64');
+        mimeType = 'application/pdf';
+      } catch (pdfErr: any) {
+        const errMsg = String(pdfErr?.message || '');
+        if (
+          errMsg.includes('password') ||
+          errMsg.includes('encrypted') ||
+          errMsg.includes('Password') ||
+          errMsg.includes('Security') ||
+          errMsg.includes('decrypt')
+        ) {
+          if (!password.trim()) {
+            return NextResponse.json(
+              { error: '🔒 Esta fatura está protegida por senha. Por favor, digite a senha da fatura (ex: dígitos do CPF ou data de nascimento) no campo abaixo para abrir.' },
+              { status: 422 }
+            );
+          } else {
+            return NextResponse.json(
+              { error: '❌ Senha incorreta para esta fatura. Verifique a senha do seu banco e tente novamente.' },
+              { status: 422 }
+            );
+          }
+        }
+      }
+    }
 
     const ai = new GoogleGenAI({ apiKey });
 
@@ -80,7 +115,7 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
     console.error('Erro na extração com Gemini:', error);
     let userMsg = error?.message || 'Falha ao processar fatura com Gemini';
     if (userMsg.includes('INVALID_ARGUMENT') || userMsg.includes('400')) {
-      userMsg = 'O PDF não pôde ser lido pela IA porque está protegido por senha/criptografia bancária. Dica: abra o PDF no seu navegador ou celular, digite a senha e clique em "Imprimir > Salvar como PDF". O novo arquivo ficará sem senha e o sistema lerá instantaneamente!';
+      userMsg = 'O PDF não pôde ser lido pela IA (provavelmente está protegido por senha do banco). Digite a senha no campo "Senha do PDF" e tente novamente.';
     }
     return NextResponse.json(
       { error: userMsg },

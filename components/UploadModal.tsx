@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { CreditCard, Person, ExtractedInvoiceData } from '@/lib/types';
-import { X, UploadCloud, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { X, UploadCloud, FileText, CheckCircle2, AlertCircle, Loader2, Lock, Eye, EyeOff } from 'lucide-react';
 import { formatCurrency } from '@/lib/storage';
 
 interface UploadModalProps {
@@ -25,6 +25,8 @@ export function UploadModal({
   onConfirmImport,
 }: UploadModalProps) {
   const [file, setFile] = useState<File | null>(null);
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extracted, setExtracted] = useState<ExtractedInvoiceData | null>(null);
@@ -49,6 +51,9 @@ export function UploadModal({
       const formData = new FormData();
       formData.append('file', file);
       formData.append('cardName', card.name);
+      if (password) {
+        formData.append('password', password);
+      }
 
       const res = await fetch('/api/extract', {
         method: 'POST',
@@ -120,13 +125,32 @@ export function UploadModal({
                 </p>
               </div>
 
-              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-300 flex items-start gap-2.5">
-                <span className="text-sm">🔒</span>
-                <div>
-                  <p className="font-semibold text-amber-200">Sua fatura tem senha de banco?</p>
-                  <p className="text-[11px] text-amber-300/80 mt-0.5 leading-relaxed">
-                    A IA do Google não consegue ler PDFs protegidos por senha. Para enviar, basta abrir o PDF no computador ou celular, digitar a senha e clicar em <strong>Imprimir &gt; Salvar como PDF</strong>. O novo PDF salvo estará sem senha e pronto para ser lido em segundos!
-                  </p>
+              {/* Campo para senha da fatura */}
+              <div className="bg-slate-800/60 border border-slate-750 p-3.5 rounded-xl space-y-1.5">
+                <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Lock size={14} className="text-indigo-400" />
+                    Senha da fatura (opcional)
+                  </span>
+                  <span className="text-[11px] font-normal text-slate-400">
+                    Preencha apenas se o seu banco exige senha
+                  </span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Ex: 4 primeiros dígitos do CPF, data de nascimento..."
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 pr-10 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-2.5 top-2.5 text-slate-400 hover:text-white"
+                  >
+                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                  </button>
                 </div>
               </div>
 

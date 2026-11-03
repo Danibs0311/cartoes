@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@cantoo/pdf-lib": "^2.11.1",
     "@google/genai": "^2.32.0",
     "@supabase/supabase-js": "^2.49.1",
     "clsx": "^2.1.1",
