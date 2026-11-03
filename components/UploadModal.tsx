@@ -120,6 +120,16 @@ export function UploadModal({
                 </p>
               </div>
 
+              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl text-xs text-amber-300 flex items-start gap-2.5">
+                <span className="text-sm">🔒</span>
+                <div>
+                  <p className="font-semibold text-amber-200">Sua fatura tem senha de banco?</p>
+                  <p className="text-[11px] text-amber-300/80 mt-0.5 leading-relaxed">
+                    A IA do Google não consegue ler PDFs protegidos por senha. Para enviar, basta abrir o PDF no computador ou celular, digitar a senha e clicar em <strong>Imprimir &gt; Salvar como PDF</strong>. O novo PDF salvo estará sem senha e pronto para ser lido em segundos!
+                  </p>
+                </div>
+              </div>
+
               {error && (
                 <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-300 flex items-center gap-2">
                   <AlertCircle size={16} className="shrink-0" />

@@ -60,19 +60,12 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
       model: 'gemini-3.8-flash',
       contents: [
         {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                data: base64Data,
-                mimeType: mimeType,
-              },
-            },
-            {
-              text: prompt,
-            },
-          ],
+          inlineData: {
+            data: base64Data,
+            mimeType: mimeType || 'application/pdf',
+          },
         },
+        prompt,
       ],
       config: {
         responseMimeType: 'application/json',
@@ -85,9 +78,13 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
     return NextResponse.json({ success: true, data: parsed });
   } catch (error: any) {
     console.error('Erro na extração com Gemini:', error);
+    let userMsg = error?.message || 'Falha ao processar fatura com Gemini';
+    if (userMsg.includes('INVALID_ARGUMENT') || userMsg.includes('400')) {
+      userMsg = 'O PDF não pôde ser lido pela IA porque está protegido por senha/criptografia bancária. Dica: abra o PDF no seu navegador ou celular, digite a senha e clique em "Imprimir > Salvar como PDF". O novo arquivo ficará sem senha e o sistema lerá instantaneamente!';
+    }
     return NextResponse.json(
-      { error: error?.message || 'Falha ao processar fatura com Gemini' },
-      { status: 500 }
+      { error: userMsg },
+      { status: 400 }
     );
   }
 }
