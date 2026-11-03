@@ -91,23 +91,45 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
   ]
 }`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: [
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType || 'application/pdf',
-          },
-        },
-        prompt,
-      ],
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
+    const CANDIDATE_MODELS = ['gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-3.7-flash'];
+    let response: any = null;
+    let lastApiError: any = null;
 
-    const responseText = response.text || '{}';
+    for (const modelName of CANDIDATE_MODELS) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: [
+            {
+              inlineData: {
+                data: base64Data,
+                mimeType: mimeType || 'application/pdf',
+              },
+            },
+            prompt,
+          ],
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
+        if (response) break;
+      } catch (err: any) {
+        lastApiError = err;
+        const msg = String(err?.message || '');
+        // Se for erro de demanda/503/404, tenta o próximo modelo da lista
+        if (msg.includes('503') || msg.includes('404') || msg.includes('UNAVAILABLE') || msg.includes('demand')) {
+          console.warn(`Modelo ${modelName} indisponível, tentando próximo...`);
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!response && lastApiError) {
+      throw lastApiError;
+    }
+
+    const responseText = response?.text || '{}';
     const parsed = JSON.parse(responseText);
 
     return NextResponse.json({ success: true, data: parsed });
@@ -116,6 +138,8 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
     let userMsg = error?.message || 'Falha ao processar fatura com Gemini';
     if (userMsg.includes('INVALID_ARGUMENT') || userMsg.includes('400')) {
       userMsg = 'O PDF não pôde ser lido pela IA (provavelmente está protegido por senha do banco). Digite a senha no campo "Senha do PDF" e tente novamente.';
+    } else if (userMsg.includes('503') || userMsg.includes('UNAVAILABLE') || userMsg.includes('demand')) {
+      userMsg = 'Os servidores da IA estão com alta demanda temporária. Por favor, aguarde alguns segundos e clique em Processar novamente.';
     }
     return NextResponse.json(
       { error: userMsg },
