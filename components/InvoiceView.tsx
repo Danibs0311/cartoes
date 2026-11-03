@@ -18,6 +18,8 @@ import {
   CreditCard as CardIcon,
   User,
   Users,
+  UserMinus,
+  RotateCcw,
   Clock,
   ExternalLink,
   MessageCircle,
@@ -43,6 +45,9 @@ interface InvoiceViewProps {
   onOpenNewPerson: () => void;
   onEditPerson: (person: Person) => void;
   onOpenSplitInstallment: (inst: Installment) => void;
+  deletedInstallments?: Installment[];
+  onRestoreInstallment?: (id: string) => void;
+  onUnassignDebtor?: (installmentId: string) => void;
 }
 
 const MONTH_NAMES = [
@@ -69,29 +74,55 @@ export function InvoiceView({
   onOpenNewPerson,
   onEditPerson,
   onOpenSplitInstallment,
+  deletedInstallments = [],
+  onRestoreInstallment,
+  onUnassignDebtor,
 }: InvoiceViewProps) {
   const [editingTotal, setEditingTotal] = useState(false);
   const [tempTotal, setTempTotal] = useState(String(invoice.total_bank_amount));
   const [selectedPersonFuture, setSelectedPersonFuture] = useState<Person | null>(null);
+  const [showTrash, setShowTrash] = useState(false);
 
-  // Cálculos de totais
-  const totalAssigned = installments
-    .filter((i) => i.person_id)
-    .reduce((sum, i) => sum + i.amount, 0);
+  // 1. Agrupamento Unificado por Pessoa (mescla múltiplos cadastros com o mesmo nome)
+  const personMapByName = new Map<string, { person: Person; allIds: Set<string> }>();
 
-  const unassignedItems = installments.filter((i) => !i.person_id);
+  people.forEach((p) => {
+    const normalizedName = p.name.trim().toLowerCase();
+    if (!personMapByName.has(normalizedName)) {
+      personMapByName.set(normalizedName, {
+        person: p,
+        allIds: new Set([p.id]),
+      });
+    } else {
+      personMapByName.get(normalizedName)!.allIds.add(p.id);
+    }
+  });
+
+  const groupedByPerson: Array<{ person: Person; items: Installment[]; total: number }> = [];
+  const allKnownPersonIds = new Set<string>();
+
+  personMapByName.forEach(({ person, allIds }) => {
+    allIds.forEach((id) => allKnownPersonIds.add(id));
+    const personItems = installments.filter((i) => i.person_id && allIds.has(i.person_id));
+    if (personItems.length > 0) {
+      const total = personItems.reduce((sum, i) => sum + i.amount, 0);
+      groupedByPerson.push({
+        person,
+        items: personItems,
+        total,
+      });
+    }
+  });
+
+  // Qualquer compra que não tenha dono ou cujo person_id não pertença a ninguém vai para a Fila de Triagem!
+  const unassignedItems = installments.filter(
+    (i) => !i.person_id || !allKnownPersonIds.has(i.person_id)
+  );
   const totalUnassigned = unassignedItems.reduce((sum, i) => sum + i.amount, 0);
+  const totalAssigned = groupedByPerson.reduce((sum, g) => sum + g.total, 0);
 
-  // Agrupamento por devedor
-  const groupedByPerson = people.map((person) => {
-    const personItems = installments.filter((i) => i.person_id === person.id);
-    const total = personItems.reduce((sum, i) => sum + i.amount, 0);
-    return {
-      person,
-      items: personItems,
-      total,
-    };
-  }).filter((g) => g.items.length > 0);
+  // Compras excluídas desta fatura
+  const currentInvoiceDeleted = deletedInstallments.filter((d) => d.invoice_id === invoice.id);
 
   const handleSaveTotal = () => {
     const num = parseFloat(tempTotal.replace(',', '.'));
@@ -518,6 +549,15 @@ export function InvoiceView({
                               {formatCurrency(item.amount)}
                             </span>
                             <div className="flex items-center gap-1">
+                              {onUnassignDebtor && (
+                                <button
+                                  onClick={() => onUnassignDebtor(item.id)}
+                                  className="p-1 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded transition"
+                                  title="Lançou errado? Desvincular e mover de volta para a Fila de Triagem"
+                                >
+                                  <UserMinus size={13} />
+                                </button>
+                              )}
                               <button
                                 onClick={() => onOpenSplitInstallment(item)}
                                 className="p-1 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded transition"
@@ -568,6 +608,56 @@ export function InvoiceView({
             </div>
           )}
         </section>
+
+        {/* Lixeira / Lançamentos Excluídos com Opção de Restaurar */}
+        {currentInvoiceDeleted.length > 0 && (
+          <section className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 transition">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+                <Trash2 size={15} className="text-rose-400" />
+                Lixeira desta Fatura ({currentInvoiceDeleted.length} {currentInvoiceDeleted.length === 1 ? 'item excluído' : 'itens excluídos'})
+              </span>
+              <button
+                onClick={() => setShowTrash(!showTrash)}
+                className="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition"
+              >
+                {showTrash ? 'Ocultar Lixeira' : 'Ver e Restaurar Lançamentos'}
+              </button>
+            </div>
+
+            {showTrash && (
+              <div className="mt-3 space-y-2 pt-3 border-t border-slate-800">
+                <p className="text-[11px] text-slate-500">
+                  Excluiu por engano ou lançou errado? Clique em restaurar para devolver o item à fatura:
+                </p>
+                {currentInvoiceDeleted.map((del) => (
+                  <div
+                    key={del.id}
+                    className="flex items-center justify-between p-3 bg-slate-950/60 border border-slate-800 rounded-xl text-xs"
+                  >
+                    <div>
+                      <p className="font-semibold text-white">{del.description}</p>
+                      <p className="text-[11px] text-slate-400">
+                        {formatCurrency(del.amount)}
+                        {del.total_installments > 1 ? ` • Parcela ${del.installment_number}/${del.total_installments}` : ' • À vista'}
+                        {del.purchase_date ? ` • ${del.purchase_date}` : ''}
+                      </p>
+                    </div>
+
+                    {onRestoreInstallment && (
+                      <button
+                        onClick={() => onRestoreInstallment(del.id)}
+                        className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 rounded-lg font-semibold flex items-center gap-1.5 transition"
+                      >
+                        <RotateCcw size={13} /> Restaurar para a Fatura
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
       </main>
 
       {/* Modal de Parcelas Futuras do Comprador */}

@@ -71,15 +71,32 @@ export function EditPersonModal({
 
     let updated: Person[];
     if (editingPersonId === 'new') {
-      const newPerson: Person = {
-        id: 'p_' + Date.now(),
-        name: name.trim(),
-        phone: phone.trim().replace(/\D/g, ''),
-        color,
-        notes: notes.trim(),
-        is_active: true,
-      };
-      updated = [...people, newPerson];
+      const existing = people.find(
+        (p) => p.name.trim().toLowerCase() === name.trim().toLowerCase()
+      );
+      if (existing) {
+        // Atualiza a pessoa existente sem criar duplicado
+        updated = people.map((p) =>
+          p.id === existing.id
+            ? {
+                ...p,
+                phone: phone.trim().replace(/\D/g, '') || p.phone,
+                color: color || p.color,
+                notes: notes.trim() || p.notes,
+              }
+            : p
+        );
+      } else {
+        const newPerson: Person = {
+          id: 'p_' + Date.now(),
+          name: name.trim(),
+          phone: phone.trim().replace(/\D/g, ''),
+          color,
+          notes: notes.trim(),
+          is_active: true,
+        };
+        updated = [...people, newPerson];
+      }
     } else {
       updated = people.map((p) =>
         p.id === editingPersonId

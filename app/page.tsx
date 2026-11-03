@@ -47,22 +47,61 @@ export default function HomePage() {
     isOpen: boolean;
     installment: Installment | null;
   }>({ isOpen: false, installment: null });
+  const [deletedInstallments, setDeletedInstallments] = useState<Installment[]>([]);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
-  // Carregar dados salvos do LocalStorage na inicialização
+  // Carregar dados salvos do LocalStorage na inicialização com Deduplicação Segura
   useEffect(() => {
     try {
       const savedCards = localStorage.getItem('dgtech_cards');
       if (savedCards) setCards(JSON.parse(savedCards));
 
+      let currentPeople = INITIAL_PEOPLE;
       const savedPeople = localStorage.getItem('dgtech_people');
-      if (savedPeople) setPeople(JSON.parse(savedPeople));
+      if (savedPeople) currentPeople = JSON.parse(savedPeople);
+
+      let currentInstallments: Installment[] = [];
+      const savedInstallments = localStorage.getItem('dgtech_installments');
+      if (savedInstallments) currentInstallments = JSON.parse(savedInstallments);
 
       const savedInvoices = localStorage.getItem('dgtech_invoices');
       if (savedInvoices) setInvoices(JSON.parse(savedInvoices));
 
-      const savedInstallments = localStorage.getItem('dgtech_installments');
-      if (savedInstallments) setInstallments(JSON.parse(savedInstallments));
+      const savedDeleted = localStorage.getItem('dgtech_deleted_installments');
+      if (savedDeleted) setDeletedInstallments(JSON.parse(savedDeleted));
+
+      // DEDUPLICAÇÃO INTELIGENTE E NÃO-DESTRUTIVA DE PESSOAS COM NOMES REPETIDOS
+      const seenNames = new Map<string, Person>();
+      const uniquePeopleList: Person[] = [];
+      const idRedirectMap = new Map<string, string>();
+
+      currentPeople.forEach((p) => {
+        const norm = p.name.trim().toLowerCase();
+        if (!seenNames.has(norm)) {
+          seenNames.set(norm, p);
+          uniquePeopleList.push(p);
+        } else {
+          // Pessoa duplicada encontrada! Redireciona compras para o ID original
+          const canonical = seenNames.get(norm)!;
+          idRedirectMap.set(p.id, canonical.id);
+        }
+      });
+
+      // Se havia cadastros duplicados do mesmo comprador, unifica as parcelas sem perder nenhuma
+      if (idRedirectMap.size > 0) {
+        currentInstallments = currentInstallments.map((inst) => {
+          if (inst.person_id && idRedirectMap.has(inst.person_id)) {
+            return { ...inst, person_id: idRedirectMap.get(inst.person_id)! };
+          }
+          return inst;
+        });
+        currentPeople = uniquePeopleList;
+        localStorage.setItem('dgtech_people', JSON.stringify(currentPeople));
+        localStorage.setItem('dgtech_installments', JSON.stringify(currentInstallments));
+      }
+
+      setPeople(currentPeople);
+      setInstallments(currentInstallments);
     } catch (e) {
       console.error('Erro ao ler localStorage', e);
     }
@@ -244,7 +283,30 @@ export default function HomePage() {
   };
 
   const handleDeleteInstallment = (id: string) => {
+    const target = installments.find((i) => i.id === id);
+    if (target) {
+      const updatedDeleted = [target, ...deletedInstallments];
+      setDeletedInstallments(updatedDeleted);
+      localStorage.setItem('dgtech_deleted_installments', JSON.stringify(updatedDeleted));
+    }
     saveInstallments(installments.filter((i) => i.id !== id));
+  };
+
+  const handleRestoreInstallment = (id: string) => {
+    const target = deletedInstallments.find((i) => i.id === id);
+    if (target) {
+      const remainingDeleted = deletedInstallments.filter((i) => i.id !== id);
+      setDeletedInstallments(remainingDeleted);
+      localStorage.setItem('dgtech_deleted_installments', JSON.stringify(remainingDeleted));
+      saveInstallments([...installments, target]);
+    }
+  };
+
+  const handleUnassignDebtor = (installmentId: string) => {
+    const updated = installments.map((i) =>
+      i.id === installmentId ? { ...i, person_id: null } : i
+    );
+    saveInstallments(updated);
   };
 
   // 5. Importação da Fatura pelo Gemini Pro com Auto-Matching
@@ -381,6 +443,9 @@ export default function HomePage() {
           onOpenNewPerson={() => setPersonModalData({ isOpen: true, person: 'new' })}
           onEditPerson={(person) => setPersonModalData({ isOpen: true, person })}
           onOpenSplitInstallment={(inst) => setSplitModalData({ isOpen: true, installment: inst })}
+          deletedInstallments={deletedInstallments}
+          onRestoreInstallment={handleRestoreInstallment}
+          onUnassignDebtor={handleUnassignDebtor}
         />
       </div>
 
