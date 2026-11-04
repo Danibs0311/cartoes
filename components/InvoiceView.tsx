@@ -24,6 +24,8 @@ import {
   Clock,
   ExternalLink,
   MessageCircle,
+  Search,
+  X,
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/storage';
 
@@ -91,9 +93,29 @@ export function InvoiceView({
   const [showTrash, setShowTrash] = useState(false);
   // Controla qual pessoa está expandida (apenas 1 permitida por vez, demais recolhidas)
   const [expandedPersonId, setExpandedPersonId] = useState<string | null>(null);
+  // Estado de Busca rápida na fatura
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const toggleExpandPerson = (personId: string) => {
     setExpandedPersonId((prev) => (prev === personId ? null : personId));
+  };
+
+  // Filtro de busca na fatura (loja, valor, data, parcela ou nome de pessoa)
+  const filterItem = (item: Installment, personName = '') => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.trim().toLowerCase();
+    const qAmount = q.replace(',', '.');
+
+    const descMatch = (item.description || '').toLowerCase().includes(q);
+    const amountMatch =
+      item.amount.toFixed(2).includes(qAmount) ||
+      formatCurrency(item.amount).toLowerCase().includes(q);
+    const dateMatch = (item.purchase_date || '').includes(q);
+    const notesMatch = (item.notes || '').toLowerCase().includes(q);
+    const personMatch = personName ? personName.toLowerCase().includes(q) : false;
+
+    return descMatch || amountMatch || dateMatch || notesMatch || personMatch;
   };
 
   // 1. Agrupamento Unificado por Pessoa (mescla múltiplos cadastros com o mesmo nome)
@@ -116,7 +138,8 @@ export function InvoiceView({
 
   personMapByName.forEach(({ person, allIds }) => {
     allIds.forEach((id) => allKnownPersonIds.add(id));
-    const personItems = installments.filter((i) => i.person_id && allIds.has(i.person_id));
+    const rawItems = installments.filter((i) => i.person_id && allIds.has(i.person_id));
+    const personItems = rawItems.filter((i) => filterItem(i, person.name));
     if (personItems.length > 0) {
       const total = personItems.reduce((sum, i) => sum + i.amount, 0);
       groupedByPerson.push({
@@ -129,10 +152,14 @@ export function InvoiceView({
 
   // Qualquer compra que não tenha dono ou cujo person_id não pertença a ninguém vai para a Fila de Triagem!
   const unassignedItems = installments.filter(
-    (i) => !i.person_id || !allKnownPersonIds.has(i.person_id)
+    (i) => (!i.person_id || !allKnownPersonIds.has(i.person_id)) && filterItem(i)
   );
   const totalUnassigned = unassignedItems.reduce((sum, i) => sum + i.amount, 0);
   const totalAssigned = groupedByPerson.reduce((sum, g) => sum + g.total, 0);
+
+  // Total de compras que bateram com a pesquisa
+  const totalFoundMatches =
+    groupedByPerson.reduce((sum, g) => sum + g.items.length, 0) + unassignedItems.length;
 
   // Compras excluídas desta fatura
   const currentInvoiceDeleted = deletedInstallments.filter((d) => d.invoice_id === invoice.id);
@@ -238,6 +265,24 @@ export function InvoiceView({
             <UploadCloud size={16} />
             <span className="hidden sm:inline">Upload</span> Fatura (PDF)
           </button>
+          {/* Botão de Procura no Cartão */}
+          <button
+            onClick={() => setIsSearching(!isSearching)}
+            className={`px-3 py-1.5 rounded-xl border text-xs sm:text-sm font-medium flex items-center gap-1.5 transition ${
+              isSearching || searchQuery
+                ? 'bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-600/30'
+                : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+            }`}
+            title="Procurar compras, valores ou pessoas neste cartão"
+          >
+            <Search size={15} className={isSearching || searchQuery ? 'text-white' : 'text-indigo-400'} />
+            <span className="hidden sm:inline">Procurar</span>
+            {searchQuery && (
+              <span className="bg-white/20 text-white text-[10px] px-1.5 py-0.2 rounded-md font-bold">
+                {totalFoundMatches}
+              </span>
+            )}
+          </button>
           {installments.length > 0 && onClearInvoicePurchases && (
             <button
               onClick={onClearInvoicePurchases}
@@ -250,6 +295,42 @@ export function InvoiceView({
           )}
         </div>
       </header>
+
+      {/* Barra de Procura Retrátil */}
+      {isSearching && (
+        <div className="bg-slate-900 border-b border-indigo-500/30 px-4 sm:px-8 py-3 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-150 sticky top-[61px] z-25 backdrop-blur-md">
+          <div className="relative flex-1">
+            <Search size={16} className="absolute left-3.5 top-3 text-indigo-400" />
+            <input
+              type="text"
+              placeholder="Digite o nome da loja, valor (ex: 30,37 ou 30.37), parcela ou comprador..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-750 focus:border-indigo-500 rounded-xl pl-10 pr-9 py-2 text-sm text-white placeholder-slate-400 focus:outline-none transition shadow-inner"
+              autoFocus
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-white transition p-0.5 rounded-md"
+                title="Limpar texto"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
+          <button
+            onClick={() => {
+              setIsSearching(false);
+              setSearchQuery('');
+            }}
+            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-semibold rounded-xl border border-slate-700 transition"
+          >
+            Fechar
+          </button>
+        </div>
+      )}
 
       {/* Conteúdo Principal */}
       <main className="p-4 sm:p-8 space-y-6 max-w-7xl mx-auto w-full">
@@ -283,6 +364,42 @@ export function InvoiceView({
             <ChevronRight size={18} />
           </button>
         </div>
+
+        {/* Banner de Resultado de Busca */}
+        {searchQuery.trim() && (
+          <div className="bg-indigo-950/40 border border-indigo-500/40 p-3.5 rounded-2xl flex items-center justify-between gap-3 text-indigo-200 text-xs sm:text-sm animate-in fade-in">
+            <div className="flex items-center gap-2.5">
+              <Search size={17} className="text-indigo-400 shrink-0" />
+              <span>
+                Filtrando compras por <strong>&ldquo;{searchQuery}&rdquo;</strong> &bull; Encontradas: <strong>{totalFoundMatches} {totalFoundMatches === 1 ? 'compra' : 'compras'}</strong>
+              </span>
+            </div>
+            <button
+              onClick={() => setSearchQuery('')}
+              className="px-2.5 py-1 bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 rounded-lg text-xs font-semibold flex items-center gap-1 transition"
+            >
+              <X size={13} /> Limpar filtro
+            </button>
+          </div>
+        )}
+
+        {searchQuery.trim() && totalFoundMatches === 0 && (
+          <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-8 text-center space-y-2">
+            <Search size={32} className="mx-auto text-slate-600" />
+            <p className="text-white font-semibold text-sm">
+              Nenhuma compra encontrada para &ldquo;{searchQuery}&rdquo;
+            </p>
+            <p className="text-slate-400 text-xs max-w-md mx-auto">
+              Verifique se digitou o valor ou nome correto. Exemplos de busca: &quot;30,37&quot;, &quot;uber&quot;, &quot;farmacia&quot;, &quot;1/5&quot;.
+            </p>
+            <button
+              onClick={() => setSearchQuery('')}
+              className="mt-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-xl inline-flex items-center gap-1"
+            >
+              <X size={14} /> Limpar busca
+            </button>
+          </div>
+        )}
 
         {/* Banner de Duplicados Detectados */}
         {duplicateCount > 0 && (
@@ -530,7 +647,7 @@ export function InvoiceView({
           ) : (
             <div className="space-y-3">
               {groupedByPerson.map((group) => {
-                const isExpanded = expandedPersonId === group.person.id;
+                const isExpanded = searchQuery.trim() ? true : expandedPersonId === group.person.id;
 
                 return (
                   <div
