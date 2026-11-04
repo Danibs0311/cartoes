@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
 import { PDFDocument } from '@cantoo/pdf-lib';
 
-export const maxDuration = 60; // Timeout estendido para 60 segundos na Vercel
+export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
@@ -25,18 +25,16 @@ export async function POST(req: NextRequest) {
     }
 
     const arrayBuffer = await file.arrayBuffer();
-    let unencryptedBytes: Uint8Array = new Uint8Array(arrayBuffer);
     let base64Data = Buffer.from(arrayBuffer).toString('base64');
     let mimeType = file.type || 'application/pdf';
-    let directText = '';
 
-    // 1. Desbloqueio de PDF com senha via @cantoo/pdf-lib
+    // 1. Desbloqueio seguro de PDF com senha via @cantoo/pdf-lib
     if (file.name.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf')) {
       try {
         const pdfDoc = await PDFDocument.load(arrayBuffer, {
           password: password.trim() || undefined,
         });
-        unencryptedBytes = await pdfDoc.save();
+        const unencryptedBytes = await pdfDoc.save();
         base64Data = Buffer.from(unencryptedBytes).toString('base64');
         mimeType = 'application/pdf';
       } catch (pdfErr: any) {
@@ -61,21 +59,11 @@ export async function POST(req: NextRequest) {
           }
         }
       }
-
-      // 2. Extração rápida de texto direto (Fast Track - 10x mais rápido que visão OCR)
-      try {
-        const { PDFParse } = await import('pdf-parse');
-        const parser = new PDFParse({ data: Buffer.from(unencryptedBytes) });
-        const parseResult = await parser.getText();
-        directText = (parseResult?.text || '').trim();
-      } catch (parseErr) {
-        console.warn('Extração direta de texto falhou, usando fluxo visual:', parseErr);
-      }
     }
 
     const ai = new GoogleGenAI({ apiKey });
 
-    const basePrompt = `Você é um especialista em conciliação de faturas de cartão de crédito brasileiras.
+    const prompt = `Você é um especialista em conciliação de faturas de cartão de crédito brasileiras.
 Analise detalhadamente ${cardName ? `a fatura do cartão "${cardName}"` : 'a fatura em anexo'}.
 Extraia todas as compras e parcelas contidas na fatura.
 
@@ -106,22 +94,15 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
   ]
 }`;
 
-    // Se temos texto digital (99% das faturas de bancos), enviamos como texto puro (processamento em 2 segundos)
-    const contents: any[] = [];
-    if (directText && directText.length > 50) {
-      contents.push(`${basePrompt}\n\n--- TEXTO DA FATURA EXTRAÍDO DO PDF ---\n${directText}`);
-    } else {
-      // Caso contrário, usa visão multimodal (PDF/Imagem em base64)
-      contents.push(
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType || 'application/pdf',
-          },
+    const contents = [
+      {
+        inlineData: {
+          data: base64Data,
+          mimeType: mimeType || 'application/pdf',
         },
-        basePrompt
-      );
-    }
+      },
+      prompt,
+    ];
 
     // Lista de modelos resilientes
     const CANDIDATE_MODELS = ['gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-3.7-flash'];

@@ -60,7 +60,16 @@ export function UploadModal({
         body: formData,
       });
 
-      const json = await res.json();
+      const responseText = await res.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(responseText);
+      } catch {
+        if (!res.ok) {
+          throw new Error(`O servidor da Vercel retornou erro (${res.status}). Aguarde alguns segundos e tente novamente.`);
+        }
+        throw new Error('Resposta inesperada do servidor.');
+      }
 
       if (!res.ok || json.error) {
         throw new Error(json.error || 'Erro ao processar fatura.');
