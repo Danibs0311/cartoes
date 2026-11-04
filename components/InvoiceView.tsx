@@ -93,14 +93,29 @@ export function InvoiceView({
   const [tempTotal, setTempTotal] = useState(String(invoice.total_bank_amount));
   const [selectedPersonFuture, setSelectedPersonFuture] = useState<Person | null>(null);
   const [showTrash, setShowTrash] = useState(false);
-  // Controla qual pessoa está expandida (apenas 1 permitida por vez, demais recolhidas)
-  const [expandedPersonId, setExpandedPersonId] = useState<string | null>(null);
+  // Controla qual pessoa está expandida (preserva ao recarregar a tela no celular)
+  const [expandedPersonId, setExpandedPersonId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('dgtech_expanded_person') || null;
+    }
+    return null;
+  });
   // Estado de Busca rápida na fatura
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   const toggleExpandPerson = (personId: string) => {
-    setExpandedPersonId((prev) => (prev === personId ? null : personId));
+    setExpandedPersonId((prev) => {
+      const next = prev === personId ? null : personId;
+      if (typeof window !== 'undefined') {
+        if (next) {
+          localStorage.setItem('dgtech_expanded_person', next);
+        } else {
+          localStorage.removeItem('dgtech_expanded_person');
+        }
+      }
+      return next;
+    });
   };
 
   // Filtro de busca na fatura (loja, valor, data, parcela ou nome de pessoa)

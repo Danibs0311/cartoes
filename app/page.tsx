@@ -78,8 +78,21 @@ export default function HomePage() {
 
   // 1. CARREGAMENTO INICIAL (OFFLINE-FIRST + SINCRONIZAÇÃO EM NUVEM)
   useEffect(() => {
-    // Carrega instantaneamente do LocalStorage (0 ms de espera na interface)
+    // Carrega instantaneamente do LocalStorage e da URL (preserva a tela exata no celular ao atualizar)
     try {
+      const searchParams = new URLSearchParams(window.location.search);
+      const urlCard = searchParams.get('card');
+      const urlMonth = searchParams.get('m');
+      const urlYear = searchParams.get('y');
+
+      const savedCardId = urlCard || localStorage.getItem('dgtech_selected_card_id');
+      const savedMonth = urlMonth ? parseInt(urlMonth, 10) : parseInt(localStorage.getItem('dgtech_selected_month') || '', 10);
+      const savedYear = urlYear ? parseInt(urlYear, 10) : parseInt(localStorage.getItem('dgtech_selected_year') || '', 10);
+
+      if (savedCardId) setSelectedCardId(savedCardId);
+      if (savedMonth && savedMonth >= 1 && savedMonth <= 12) setCurrentMonth(savedMonth);
+      if (savedYear && savedYear >= 2020) setCurrentYear(savedYear);
+
       const savedCards = localStorage.getItem('dgtech_cards');
       if (savedCards) setCards(JSON.parse(savedCards));
 
@@ -182,6 +195,26 @@ export default function HomePage() {
     };
   }, []);
 
+  // Persiste a tela ativa (Cartão, Mês e Ano) na URL e no LocalStorage
+  // Isso garante que ao puxar para baixo no celular (pull-to-refresh), a tela permaneça exatamente a mesma!
+  useEffect(() => {
+    try {
+      localStorage.setItem('dgtech_selected_card_id', selectedCardId);
+      localStorage.setItem('dgtech_selected_month', String(currentMonth));
+      localStorage.setItem('dgtech_selected_year', String(currentYear));
+
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        params.set('card', selectedCardId);
+        params.set('m', String(currentMonth));
+        params.set('y', String(currentYear));
+        window.history.replaceState(null, '', `?${params.toString()}`);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, [selectedCardId, currentMonth, currentYear]);
+
   // Helpers de persistência LocalStorage
   const saveCards = (newCards: CreditCard[]) => {
     setCards(newCards);
@@ -203,8 +236,11 @@ export default function HomePage() {
     localStorage.setItem('dgtech_installments', JSON.stringify(newInstallments));
   };
 
-  // Cartão Ativo
-  const activeCard = cards.find((c) => c.id === selectedCardId) || cards[0];
+  // Cartão Ativo (com busca inteligente por ID ou Nome para manter a seleção ao recarregar)
+  const activeCard =
+    cards.find((c) => c.id === selectedCardId) ||
+    cards.find((c) => c.name.toLowerCase() === selectedCardId.toLowerCase()) ||
+    cards[0];
 
   // Chave única para a fatura do cartão no mês/ano
   const invoiceKey = `${activeCard.id}_${currentYear}_${currentMonth}`;
