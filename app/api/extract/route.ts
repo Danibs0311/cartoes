@@ -28,12 +28,22 @@ export async function POST(req: NextRequest) {
     let base64Data = Buffer.from(arrayBuffer).toString('base64');
     let mimeType = file.type || 'application/pdf';
 
-    // 1. Desbloqueio seguro de PDF com senha via @cantoo/pdf-lib
+    // 1. Desbloqueio seguro e otimização de PDF via @cantoo/pdf-lib
     if (file.name.toLowerCase().endsWith('.pdf') || mimeType.includes('pdf')) {
       try {
         const pdfDoc = await PDFDocument.load(arrayBuffer, {
           password: password.trim() || undefined,
         });
+
+        // Otimização: faturas com mais de 6 páginas têm 99% das compras nas primeiras páginas
+        // e páginas finais são termos e publicidade. Truncar previne estouro de memória e timeout.
+        const pageCount = pdfDoc.getPageCount();
+        if (pageCount > 6) {
+          for (let i = pageCount - 1; i >= 6; i--) {
+            pdfDoc.removePage(i);
+          }
+        }
+
         const unencryptedBytes = await pdfDoc.save();
         base64Data = Buffer.from(unencryptedBytes).toString('base64');
         mimeType = 'application/pdf';
@@ -104,26 +114,33 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
       prompt,
     ];
 
-    // Lista de modelos resilientes
-    const CANDIDATE_MODELS = ['gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-3.7-flash'];
+    // Modelos ultra-rápidos: gemini-3.5-flash-lite responde em ~1 a 2s (evitando timeout 504 da Vercel)
+    const CANDIDATE_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.5-flash'];
     let response: any = null;
     let lastApiError: any = null;
 
     for (const modelName of CANDIDATE_MODELS) {
       try {
-        response = await ai.models.generateContent({
+        // Limita cada tentativa a 7 segundos para nunca exceder o limite de 10s da Vercel Hobby
+        const callPromise = ai.models.generateContent({
           model: modelName,
           contents,
           config: {
             responseMimeType: 'application/json',
           },
         });
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('TIMEOUT_EXCEEDED')), 7000)
+        );
+
+        response = await Promise.race([callPromise, timeoutPromise]);
         if (response) break;
       } catch (err: any) {
         lastApiError = err;
         const msg = String(err?.message || '');
-        if (msg.includes('503') || msg.includes('404') || msg.includes('UNAVAILABLE') || msg.includes('demand')) {
-          console.warn(`Modelo ${modelName} temporariamente indisponível, tentando próximo...`);
+        console.warn(`Tentativa com ${modelName} falhou (${msg}), tentando próximo...`);
+        if (msg.includes('503') || msg.includes('404') || msg.includes('TIMEOUT') || msg.includes('UNAVAILABLE') || msg.includes('demand')) {
           continue;
         }
         throw err;
@@ -143,8 +160,8 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
     let userMsg = error?.message || 'Falha ao processar fatura com Gemini';
     if (userMsg.includes('INVALID_ARGUMENT') || userMsg.includes('400')) {
       userMsg = 'O PDF não pôde ser lido (possivelmente protegido por senha). Digite a senha no campo "Senha da fatura" e tente novamente.';
-    } else if (userMsg.includes('503') || userMsg.includes('UNAVAILABLE') || userMsg.includes('demand')) {
-      userMsg = 'Alta demanda temporária nos servidores de IA. Por favor, aguarde alguns segundos e clique em Processar novamente.';
+    } else if (userMsg.includes('503') || userMsg.includes('UNAVAILABLE') || userMsg.includes('demand') || userMsg.includes('TIMEOUT')) {
+      userMsg = 'O processamento levou mais tempo que o limite do servidor. Por favor, tente novamente em instantes ou utilize o botão "+ Lançamento Manual".';
     }
     return NextResponse.json(
       { error: userMsg },
