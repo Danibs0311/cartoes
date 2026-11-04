@@ -309,7 +309,7 @@ export default function HomePage() {
     saveInstallments(updated);
   };
 
-  // 5. Importação da Fatura pelo Gemini Pro com Auto-Matching
+  // 5. Importação Inteligente e Não-Destrutiva da Fatura (Preserva tudo o que já foi atribuído)
   const handleConfirmImport = (extracted: ExtractedInvoiceData) => {
     // 1. Atualiza valor total da fatura
     const newTotal = extracted.total_amount || 0;
@@ -318,24 +318,43 @@ export default function HomePage() {
       total_bank_amount: newTotal > 0 ? newTotal : currentInvoice.total_bank_amount,
     };
 
-    // 2. Transforma itens extraídos em parcelas e tenta auto-match com base no histórico
-    const newItems: Installment[] = [];
+    // 2. Itens já existentes nesta fatura e em outras faturas
+    const existingInThisInvoice = installments.filter((i) => i.invoice_id === currentInvoice.id);
+    const otherInvoicesInstallments = installments.filter((i) => i.invoice_id !== currentInvoice.id);
+
+    // Mantém todos os itens que você já lançou e atribuiu
+    const updatedInvoiceItems: Installment[] = [...existingInThisInvoice];
+    let newItemsAddedCount = 0;
 
     extracted.items?.forEach((item, index) => {
-      // Busca se já existe essa compra em meses anteriores para auto-atribuir o devedor
       const cleanDesc = item.description.trim().toLowerCase();
-      const existingMatch = installments.find(
-        (i) => i.person_id && i.description?.toLowerCase().includes(cleanDesc)
+
+      // Verifica se este item já existe na fatura para NUNCA duplicar
+      const alreadyExists = existingInThisInvoice.find((existing) => {
+        const existingDesc = (existing.description || '').trim().toLowerCase();
+        const sameDesc = existingDesc.includes(cleanDesc) || cleanDesc.includes(existingDesc);
+        const sameAmount = Math.abs(existing.amount - item.amount) < 0.05;
+        const sameInst = existing.installment_number === item.current_installment;
+        return (sameDesc && sameAmount && sameInst) || (sameDesc && sameAmount);
+      });
+
+      if (alreadyExists) {
+        // Já existe! Preserva 100% dos dados, do comprador atribuído e das divisões
+        return;
+      }
+
+      // É um item novo ou que estava faltando (ex: RV MAKES):
+      // Tenta buscar no histórico se alguém já comprou nessa mesma loja
+      const historyMatch = installments.find(
+        (i) => i.person_id && (i.description || '').toLowerCase().includes(cleanDesc)
       );
 
-      const assignedPerson = existingMatch ? existingMatch.person_id : null;
       const purchaseId = `pur_${Date.now()}_${index}`;
-
-      newItems.push({
+      updatedInvoiceItems.push({
         id: `inst_${Date.now()}_${index}`,
         invoice_id: currentInvoice.id,
         purchase_id: purchaseId,
-        person_id: assignedPerson,
+        person_id: historyMatch ? historyMatch.person_id : null,
         description: item.description,
         amount: item.amount,
         installment_number: item.current_installment,
@@ -343,6 +362,7 @@ export default function HomePage() {
         status: 'pendente',
         purchase_date: item.date || new Date().toISOString().slice(0, 10),
       });
+      newItemsAddedCount++;
     });
 
     saveInvoices({
@@ -350,7 +370,7 @@ export default function HomePage() {
       [invoiceKey]: updatedInvoice,
     });
 
-    saveInstallments([...installments, ...newItems]);
+    saveInstallments([...otherInvoicesInstallments, ...updatedInvoiceItems]);
   };
 
   // 6. Dividir Compra entre 2 ou mais pessoas
