@@ -8,6 +8,39 @@ export interface CloudSyncState {
 }
 
 /**
+ * Converte datas brasileiras (DD/MM, DD/MM/YYYY, ISO) para o formato aceito pelo PostgreSQL (YYYY-MM-DD)
+ */
+export function formatDateForPostgres(rawDate?: string | null, fallbackYear: number = 2026): string | null {
+  if (!rawDate || typeof rawDate !== 'string') return null;
+  const trimmed = rawDate.trim();
+  if (!trimmed) return null;
+
+  // Se já for YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  // Se for DD/MM/YYYY
+  const dmyMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmyMatch) {
+    return `${dmyMatch[3]}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}`;
+  }
+
+  // Se for DD/MM (formato típico das faturas de cartão no Brasil, ex: 12/04 ou 06/06)
+  const dmMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})$/);
+  if (dmMatch) {
+    return `${fallbackYear}-${dmMatch[2].padStart(2, '0')}-${dmMatch[1].padStart(2, '0')}`;
+  }
+
+  // Se contiver timestamp ou data ISO (ex: 2026-05-10T...)
+  if (trimmed.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    return trimmed.slice(0, 10);
+  }
+
+  return null;
+}
+
+/**
  * Carrega todos os dados do Supabase na nuvem
  */
 export async function fetchCloudData(): Promise<{
@@ -300,6 +333,7 @@ export async function cloudSaveInstallment(
     // 2. Atualiza ou cria a compra correspondente
     let purchaseId = installment.purchase_id;
     const isTempPurchaseId = !purchaseId || purchaseId.startsWith('pur_') || purchaseId.length < 20;
+    const cleanDate = formatDateForPostgres(installment.purchase_date, year);
 
     if (isTempPurchaseId) {
       const { data: purData, error: purErr } = await supabase
@@ -308,7 +342,7 @@ export async function cloudSaveInstallment(
           card_id: cardId,
           person_id: installment.person_id && installment.person_id.length > 20 ? installment.person_id : null,
           description: installment.description || 'Compra',
-          purchase_date: installment.purchase_date || null,
+          purchase_date: cleanDate,
           total_installments: installment.total_installments || 1,
           total_amount: (installment.amount || 0) * (installment.total_installments || 1),
         })
@@ -321,12 +355,11 @@ export async function cloudSaveInstallment(
       }
       purchaseId = purData.id;
     } else {
-      // Atualiza descrição e data na compra
       await supabase
         .from('purchases')
         .update({
           description: installment.description,
-          purchase_date: installment.purchase_date || null,
+          purchase_date: cleanDate,
           person_id: installment.person_id && installment.person_id.length > 20 ? installment.person_id : null,
         })
         .eq('id', purchaseId);
@@ -436,7 +469,7 @@ export async function cloudSyncImportInvoice({
           .from('purchases')
           .update({
             description: m.extractedItem.description,
-            purchase_date: m.extractedItem.date || null,
+            purchase_date: formatDateForPostgres(m.extractedItem.date, year),
           })
           .eq('id', m.existing.purchase_id);
       }
@@ -447,6 +480,7 @@ export async function cloudSyncImportInvoice({
       const totalInst = item.total_installments || 1;
       const currentInst = item.current_installment || 1;
       const amount = item.amount || 0;
+      const cleanDate = formatDateForPostgres(item.date, year);
 
       const { data: pur, error: purErr } = await supabase
         .from('purchases')
@@ -454,7 +488,7 @@ export async function cloudSyncImportInvoice({
           card_id: cardId,
           person_id: null,
           description: item.description,
-          purchase_date: item.date || null,
+          purchase_date: cleanDate,
           total_installments: totalInst,
           total_amount: amount * totalInst,
         })
@@ -532,7 +566,7 @@ export function subscribeToCloudChanges(onDataChange: () => void): () => void {
 }
 
 /**
- * Migra dados locais existentes no localStorage para o Supabase
+ * Migra dados locais existentes no localStorage para o Supabase com deduplicação e datas tratadas
  */
 export async function migrateLocalStorageToCloud(
   localCards: CreditCard[],
@@ -559,23 +593,33 @@ export async function migrateLocalStorageToCloud(
       }
     });
 
-    // 2. Migra Pessoas / Devedores
+    // 2. Migra Pessoas / Devedores (reutiliza existentes por nome para evitar duplicatas)
+    const { data: existingPeople } = await supabase.from('people').select('*');
+    const cloudPeopleByName = new Map<string, string>();
+    (existingPeople || []).forEach((p) => cloudPeopleByName.set(p.name.trim().toLowerCase(), p.id));
+
     const personLocalIdToCloudId = new Map<string, string>();
     for (const p of localPeople) {
-      const { data: pData } = await supabase
-        .from('people')
-        .insert({
-          name: p.name,
-          phone: p.phone || null,
-          color: p.color || '#10B981',
-          notes: p.notes || null,
-          is_active: p.is_active ?? true,
-        })
-        .select('id')
-        .single();
+      const norm = p.name.trim().toLowerCase();
+      if (cloudPeopleByName.has(norm)) {
+        personLocalIdToCloudId.set(p.id, cloudPeopleByName.get(norm)!);
+      } else {
+        const { data: pData } = await supabase
+          .from('people')
+          .insert({
+            name: p.name,
+            phone: p.phone || null,
+            color: p.color || '#10B981',
+            notes: p.notes || null,
+            is_active: p.is_active ?? true,
+          })
+          .select('id')
+          .single();
 
-      if (pData) {
-        personLocalIdToCloudId.set(p.id, pData.id);
+        if (pData) {
+          personLocalIdToCloudId.set(p.id, pData.id);
+          cloudPeopleByName.set(norm, pData.id);
+        }
       }
     }
 
@@ -583,7 +627,8 @@ export async function migrateLocalStorageToCloud(
     const invoiceKeyToCloudId = new Map<string, string>();
     for (const key of Object.keys(localInvoices)) {
       const inv = localInvoices[key];
-      const cloudCardId = localCardIdToCloudId.get(inv.card_id) || inv.card_id;
+      const cloudCardId = localCardIdToCloudId.get(inv.card_id) || (cloudCards && cloudCards[0]?.id);
+      if (!cloudCardId) continue;
 
       const { data: invData } = await supabase
         .from('invoices')
@@ -638,6 +683,7 @@ export async function migrateLocalStorageToCloud(
         : null;
 
       const totalAmount = insts.reduce((acc, i) => acc + i.amount, 0);
+      const cleanDate = formatDateForPostgres(first.purchase_date, 2026);
 
       const { data: purData } = await supabase
         .from('purchases')
@@ -645,7 +691,7 @@ export async function migrateLocalStorageToCloud(
           card_id: cloudCardId,
           person_id: assignedCloudPersonId,
           description: first.description || 'Compra Importada',
-          purchase_date: first.purchase_date || null,
+          purchase_date: cleanDate,
           total_installments: first.total_installments || insts.length || 1,
           total_amount: totalAmount,
         })
