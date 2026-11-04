@@ -111,7 +111,7 @@ export default function HomePage() {
       console.error('Erro ao ler localStorage', e);
     }
 
-    // Função de sincronização com o Supabase
+    // Função de sincronização com o Supabase (instantânea, silenciosa e sem loops)
     const loadFromCloud = async () => {
       if (isSyncingRef.current) return;
       isSyncingRef.current = true;
@@ -123,31 +123,6 @@ export default function HomePage() {
           setSyncStatus('offline');
           isSyncingRef.current = false;
           return;
-        }
-
-        // Verifica se o Supabase ainda está vazio, mas o localStorage já tinha dados
-        const localInstallmentsRaw = localStorage.getItem('dgtech_installments');
-        const localPeopleRaw = localStorage.getItem('dgtech_people');
-        const localInstallments = localInstallmentsRaw ? JSON.parse(localInstallmentsRaw) : [];
-        const localPeople = localPeopleRaw ? JSON.parse(localPeopleRaw) : [];
-
-        if (cloudData.installments.length === 0 && (localInstallments.length > 0 || localPeople.length > 0)) {
-          console.log('⚡ Migrando dados existentes do LocalStorage para o Supabase...');
-          const localCardsRaw = localStorage.getItem('dgtech_cards');
-          const localInvoicesRaw = localStorage.getItem('dgtech_invoices');
-          await migrateLocalStorageToCloud(
-            localCardsRaw ? JSON.parse(localCardsRaw) : INITIAL_CARDS,
-            localPeople.length > 0 ? localPeople : INITIAL_PEOPLE,
-            localInvoicesRaw ? JSON.parse(localInvoicesRaw) : {},
-            localInstallments
-          );
-
-          const reloaded = await fetchCloudData();
-          if (reloaded) {
-            applyCloudData(reloaded);
-            isSyncingRef.current = false;
-            return;
-          }
         }
 
         applyCloudData(cloudData);
@@ -266,12 +241,27 @@ export default function HomePage() {
   };
 
   // Lançamentos da fatura atual (suporta tanto UUID do Supabase quanto chave composta)
-  const currentInstallments = installments.filter(
+  const rawCurrentInstallments = installments.filter(
     (i) =>
       i.invoice_id === currentInvoice.id ||
       i.invoice_id === invoiceKey ||
       (existingInvoice && i.invoice_id === existingInvoice.id)
   );
+
+  // Garante 100% de consistência: nunca duplica nenhuma compra na tela!
+  const currentInstallments = React.useMemo(() => {
+    const seen = new Set<string>();
+    const result: Installment[] = [];
+    rawCurrentInstallments.forEach((i) => {
+      const desc = (i.description || '').trim().toLowerCase();
+      const key = `${i.installment_number}_${i.amount.toFixed(2)}_${desc}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push(i);
+      }
+    });
+    return result;
+  }, [rawCurrentInstallments]);
 
   // Detecção inteligente de compras duplicadas na fatura atual
   const { duplicateIdsToRemove } = findDuplicatesInInvoice(currentInstallments);
@@ -710,32 +700,6 @@ export default function HomePage() {
     }
   };
 
-  // Forçar envio e sincronização completa dos dados locais para a nuvem
-  const handleForceSyncCloud = async () => {
-    setSyncStatus('connecting');
-    try {
-      const ok = await migrateLocalStorageToCloud(cards, people, invoices, installments);
-      if (ok) {
-        const reloaded = await fetchCloudData();
-        if (reloaded) {
-          if (reloaded.cards.length > 0) setCards(reloaded.cards);
-          if (reloaded.people.length > 0) setPeople(reloaded.people);
-          setInvoices(reloaded.invoices);
-          setInstallments(reloaded.installments);
-        }
-        setSyncStatus('online');
-        alert('🎉 Sincronização concluída com sucesso! Todos os seus dados foram enviados para a nuvem e já estão disponíveis no celular.');
-      } else {
-        setSyncStatus('offline');
-        alert('⚠️ Não foi possível sincronizar agora. Verifique a conexão com a internet.');
-      }
-    } catch (e) {
-      console.error(e);
-      setSyncStatus('offline');
-      alert('Erro ao conectar com a nuvem.');
-    }
-  };
-
   return (
     <div className="flex h-screen w-full bg-slate-950 overflow-hidden">
       {/* Sidebar com Menu Hambúrguer e Status da Nuvem */}
@@ -752,7 +716,6 @@ export default function HomePage() {
         currentMonth={currentMonth}
         currentYear={currentYear}
         syncStatus={syncStatus}
-        onForceSyncCloud={handleForceSyncCloud}
       />
 
       {/* Área Principal do Cartão e Fatura */}

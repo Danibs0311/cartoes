@@ -127,21 +127,31 @@ export async function fetchCloudData(): Promise<{
       invoices[`${inv.card_id}_${inv.year}_${inv.month}`] = invObj;
     });
 
-    const installments: Installment[] = (installmentsRes.data || []).map((inst: any) => {
+    // Deduplicação estrita em memória para garantir consistência perfeita de valores
+    const seenKeys = new Set<string>();
+    const installments: Installment[] = [];
+
+    (installmentsRes.data || []).forEach((inst: any) => {
       const pur = Array.isArray(inst.purchase) ? inst.purchase[0] : inst.purchase;
-      return {
-        id: inst.id,
-        invoice_id: inst.invoice_id,
-        purchase_id: inst.purchase_id,
-        person_id: inst.person_id || null,
-        installment_number: inst.installment_number || 1,
-        total_installments: inst.total_installments || 1,
-        amount: Number(inst.amount || 0),
-        status: inst.status || 'pendente',
-        notes: inst.notes || undefined,
-        description: pur?.description || 'Compra',
-        purchase_date: pur?.purchase_date || undefined,
-      };
+      const desc = (pur?.description || 'Compra').trim().toLowerCase();
+      const dedupKey = `${inst.invoice_id}|${inst.installment_number}|${Number(inst.amount).toFixed(2)}|${desc}`;
+
+      if (!seenKeys.has(dedupKey)) {
+        seenKeys.add(dedupKey);
+        installments.push({
+          id: inst.id,
+          invoice_id: inst.invoice_id,
+          purchase_id: inst.purchase_id,
+          person_id: inst.person_id || null,
+          installment_number: inst.installment_number || 1,
+          total_installments: inst.total_installments || 1,
+          amount: Number(inst.amount || 0),
+          status: inst.status || 'pendente',
+          notes: inst.notes || undefined,
+          description: pur?.description || 'Compra',
+          purchase_date: pur?.purchase_date || undefined,
+        });
+      }
     });
 
     return { cards, people, invoices, installments };
@@ -542,25 +552,34 @@ export async function cloudSyncImportInvoice({
 }
 
 /**
- * Assina mudanças em tempo real em todas as tabelas do Supabase
+ * Assina mudanças em tempo real em todas as tabelas do Supabase com debounce inteligente
+ * Isso evita tempestades de requisições simultâneas e garante resposta instantânea
  */
 export function subscribeToCloudChanges(onDataChange: () => void): () => void {
   if (!supabase || !isSupabaseConfigured) return () => {};
 
   const client = supabase;
+  let debounceTimer: any = null;
+
+  const handleRemoteChange = (payload: any) => {
+    console.log('⚡ Atualização em tempo real recebida do Supabase:', payload.table, payload.eventType);
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      onDataChange();
+    }, 400);
+  };
+
   const channel = client
     .channel('cloud-realtime-sync')
     .on(
       'postgres_changes',
       { event: '*', schema: 'public' },
-      (payload) => {
-        console.log('⚡ Atualização em tempo real recebida do Supabase:', payload.table, payload.eventType);
-        onDataChange();
-      }
+      handleRemoteChange
     )
     .subscribe();
 
   return () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
     client.removeChannel(channel);
   };
 }

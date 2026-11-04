@@ -18,7 +18,6 @@ interface SidebarProps {
   currentMonth?: number;
   currentYear?: number;
   syncStatus?: 'online' | 'connecting' | 'offline';
-  onForceSyncCloud?: () => void;
 }
 
 export function Sidebar({
@@ -34,7 +33,6 @@ export function Sidebar({
   currentMonth,
   currentYear,
   syncStatus = 'connecting',
-  onForceSyncCloud,
 }: SidebarProps) {
   const [search, setSearch] = useState('');
 
@@ -247,17 +245,6 @@ export function Sidebar({
               Supabase
             </span>
           </div>
-
-          {onForceSyncCloud && (
-            <button
-              onClick={onForceSyncCloud}
-              title="Sincronizar compras e pessoas para a nuvem para acessar no celular"
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 hover:text-white rounded-lg text-[11px] font-medium border border-indigo-500/30 transition"
-            >
-              <RefreshCw size={12} className={syncStatus === 'connecting' ? 'animate-spin' : ''} />
-              Sincronizar com Celular
-            </button>
-          )}
         </div>
       </aside>
     </>
