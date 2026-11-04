@@ -54,6 +54,7 @@ interface InvoiceViewProps {
   duplicateCount?: number;
   onCleanDuplicates?: () => void;
   onClearInvoicePurchases?: () => void;
+  onUpdateInvoiceStatus?: (newStatus: 'aberta' | 'fechada' | 'paga') => void;
 }
 
 const MONTH_NAMES = [
@@ -86,6 +87,7 @@ export function InvoiceView({
   duplicateCount = 0,
   onCleanDuplicates,
   onClearInvoicePurchases,
+  onUpdateInvoiceStatus,
 }: InvoiceViewProps) {
   const [editingTotal, setEditingTotal] = useState(false);
   const [tempTotal, setTempTotal] = useState(String(invoice.total_bank_amount));
@@ -350,9 +352,53 @@ export function InvoiceView({
               <h2 className="text-base sm:text-lg font-bold text-white capitalize">
                 {MONTH_NAMES[invoice.month - 1]} {invoice.year}
               </h2>
-              <p className="text-[11px] text-slate-400">
-                Status: <span className="uppercase text-indigo-400 font-semibold">{invoice.status}</span>
-              </p>
+              <div className="flex flex-col items-center gap-0.5 mt-0.5">
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      if (!onUpdateInvoiceStatus) return;
+                      const next =
+                        invoice.status === 'aberta'
+                          ? 'fechada'
+                          : invoice.status === 'fechada'
+                          ? 'paga'
+                          : 'aberta';
+                      onUpdateInvoiceStatus(next);
+                    }}
+                    className={`px-2 py-0.5 rounded-full text-[11px] font-bold uppercase transition flex items-center gap-1.5 cursor-pointer ${
+                      invoice.status === 'fechada'
+                        ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25'
+                        : invoice.status === 'paga'
+                        ? 'bg-blue-500/15 text-blue-300 border border-blue-500/30 hover:bg-blue-500/25'
+                        : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25'
+                    }`}
+                    title="Status baseado no Melhor Dia de Compras. Clique para alternar manualmente (Aberta / Fechada / Paga)"
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        invoice.status === 'fechada'
+                          ? 'bg-amber-400 animate-pulse'
+                          : invoice.status === 'paga'
+                          ? 'bg-blue-400'
+                          : 'bg-emerald-400'
+                      }`}
+                    />
+                    Fatura {invoice.status}
+                  </button>
+                </div>
+
+                <p className="text-[10px] text-slate-400">
+                  {card.best_day ? (
+                    invoice.status === 'fechada' ? (
+                      <span className="text-amber-300/80">Fechou no Melhor Dia ({card.best_day.toString().padStart(2, '0')}/{invoice.month.toString().padStart(2, '0')})</span>
+                    ) : (
+                      <span className="text-slate-400">Fecha no Melhor Dia ({card.best_day.toString().padStart(2, '0')}/{invoice.month.toString().padStart(2, '0')})</span>
+                    )
+                  ) : (
+                    <span>Melhor dia de compras não definido</span>
+                  )}
+                </p>
+              </div>
             </div>
           </div>
 

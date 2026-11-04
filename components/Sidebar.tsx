@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { CreditCard, Person } from '@/lib/types';
 import { CreditCard as CardIcon, Calendar, Users, Plus, Search, ChevronRight, Menu, X, Settings, ShieldCheck } from 'lucide-react';
-import { formatCurrency } from '@/lib/storage';
+import { formatCurrency, calculateInvoiceStatus } from '@/lib/storage';
 
 interface SidebarProps {
   cards: CreditCard[];
@@ -15,6 +15,8 @@ interface SidebarProps {
   onOpenNewPerson: () => void;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
+  currentMonth?: number;
+  currentYear?: number;
 }
 
 export function Sidebar({
@@ -27,6 +29,8 @@ export function Sidebar({
   onOpenNewPerson,
   isOpenMobile,
   onCloseMobile,
+  currentMonth,
+  currentYear,
 }: SidebarProps) {
   const [search, setSearch] = useState('');
 
@@ -138,6 +142,12 @@ export function Sidebar({
 
           {filteredCards.map((card) => {
             const isSelected = card.id === selectedCardId;
+            const cardStatus = calculateInvoiceStatus(
+              card,
+              currentMonth || new Date().getMonth() + 1,
+              currentYear || new Date().getFullYear()
+            );
+
             return (
               <div
                 key={card.id}
@@ -161,13 +171,24 @@ export function Sidebar({
                       {card.name}
                     </span>
                   </div>
-                  {card.due_day ? (
-                    <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                      Venc: {card.due_day.toString().padStart(2, '0')}
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        cardStatus === 'fechada'
+                          ? 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
+                          : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                      }`}
+                    >
+                      {cardStatus}
                     </span>
-                  ) : (
-                    <span className="text-[10px] text-slate-500">Sem data</span>
-                  )}
+                    {card.due_day ? (
+                      <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                        Venc: {card.due_day.toString().padStart(2, '0')}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-slate-500">Sem data</span>
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between text-[11px] text-slate-400 pl-4.5">

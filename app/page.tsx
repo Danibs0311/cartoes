@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { CreditCard, Person, Invoice, Installment, ExtractedInvoiceData } from '@/lib/types';
-import { INITIAL_CARDS, INITIAL_PEOPLE } from '@/lib/storage';
+import { INITIAL_CARDS, INITIAL_PEOPLE, calculateInvoiceStatus } from '@/lib/storage';
 import { Sidebar } from '@/components/Sidebar';
 import { InvoiceView } from '@/components/InvoiceView';
 import { EditCardModal } from '@/components/EditCardModal';
@@ -134,13 +134,25 @@ export default function HomePage() {
 
   // Chave única para a fatura do cartão no mês/ano
   const invoiceKey = `${activeCard.id}_${currentYear}_${currentMonth}`;
-  const currentInvoice: Invoice = invoices[invoiceKey] || {
+  const existingInvoice = invoices[invoiceKey];
+
+  // Calcula o status da fatura dinamicamente com base no Melhor Dia de Compras
+  const computedStatus = calculateInvoiceStatus(
+    activeCard,
+    currentMonth,
+    currentYear,
+    existingInvoice?.status
+  );
+
+  const currentInvoice: Invoice = {
     id: invoiceKey,
     card_id: activeCard.id,
     month: currentMonth,
     year: currentYear,
-    total_bank_amount: 0,
-    status: 'aberta',
+    total_bank_amount: existingInvoice?.total_bank_amount || 0,
+    status: computedStatus,
+    pdf_url: existingInvoice?.pdf_url,
+    notes: existingInvoice?.notes,
   };
 
   // Lançamentos da fatura atual
@@ -220,6 +232,17 @@ export default function HomePage() {
     const updatedInvoice: Invoice = {
       ...currentInvoice,
       total_bank_amount: newTotal,
+    };
+    saveInvoices({
+      ...invoices,
+      [invoiceKey]: updatedInvoice,
+    });
+  };
+
+  const handleUpdateInvoiceStatus = (newStatus: 'aberta' | 'fechada' | 'paga') => {
+    const updatedInvoice: Invoice = {
+      ...currentInvoice,
+      status: newStatus,
     };
     saveInvoices({
       ...invoices,
@@ -502,6 +525,8 @@ export default function HomePage() {
         onOpenNewPerson={() => setPersonModalData({ isOpen: true, person: 'new' })}
         isOpenMobile={isMobileMenuOpen}
         onCloseMobile={() => setIsMobileMenuOpen(false)}
+        currentMonth={currentMonth}
+        currentYear={currentYear}
       />
 
       {/* Área Principal do Cartão e Fatura */}
@@ -531,6 +556,7 @@ export default function HomePage() {
           duplicateCount={duplicateCount}
           onCleanDuplicates={handleCleanDuplicates}
           onClearInvoicePurchases={handleClearCurrentInvoicePurchases}
+          onUpdateInvoiceStatus={handleUpdateInvoiceStatus}
         />
       </div>
 

@@ -37,3 +37,42 @@ export function formatNumber(value: number | null | undefined): string {
   if (value === null || value === undefined || isNaN(value)) return '0,00';
   return value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+/**
+ * Calcula a data de corte / fechamento da fatura com base no Melhor Dia de Compras
+ */
+export function getInvoiceClosingDate(card: CreditCard, month: number, year: number): Date {
+  const dueDay = card.due_day || 10;
+  const bestDay = card.best_day !== null && card.best_day !== undefined
+    ? card.best_day
+    : (dueDay > 7 ? dueDay - 7 : 1);
+
+  // Se o melhor dia é estritamente maior que o vencimento (ex: vencimento dia 09 e fechamento dia 27 do mês anterior):
+  if (card.best_day && card.best_day > dueDay) {
+    // Fechamento no mês anterior (mês - 2 no Date do JS)
+    return new Date(year, month - 2, bestDay, 23, 59, 59, 999);
+  }
+
+  // Fechamento no mesmo mês de vencimento (mês - 1 no Date do JS)
+  return new Date(year, month - 1, bestDay, 23, 59, 59, 999);
+}
+
+/**
+ * Determina o status da fatura: 'aberta' ou 'fechada' baseado no Melhor Dia de Compras
+ */
+export function calculateInvoiceStatus(
+  card: CreditCard,
+  month: number,
+  year: number,
+  existingStatus?: 'aberta' | 'fechada' | 'paga'
+): 'aberta' | 'fechada' | 'paga' {
+  // Se o usuário marcou manualmente como paga, preserva 'paga'
+  if (existingStatus === 'paga') {
+    return 'paga';
+  }
+
+  const closingDate = getInvoiceClosingDate(card, month, year);
+  const now = new Date();
+
+  return now >= closingDate ? 'fechada' : 'aberta';
+}
