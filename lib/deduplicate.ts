@@ -1,4 +1,4 @@
-import { Installment } from './types';
+import { Installment, ExtractedInvoiceData } from './types';
 
 /**
  * Normaliza uma descrição removendo acentos, prefixos de maquininhas e caracteres especiais
@@ -144,4 +144,116 @@ export function cleanInvoiceDuplicates(
     cleanedInstallments,
     removedCount: duplicateIdsToRemove.size,
   };
+}
+
+/**
+ * Busca uma compra existente no sistema com base na ordem estrita de critérios solicitada:
+ * 1. Valor da Prestação (obrigatório, margem de 5 centavos)
+ * 2. Data de Compra (se disponível)
+ * 3. Número de Prestação (número da parcela)
+ */
+export function findMatchingInstallment(
+  item: {
+    amount: number;
+    current_installment: number;
+    total_installments?: number;
+    date?: string;
+    description: string;
+  },
+  availableExisting: Installment[]
+): Installment | null {
+  // Critério 1: Valor da Prestação
+  const sameAmountCandidates = availableExisting.filter(
+    (e) => Math.abs(e.amount - item.amount) < 0.05
+  );
+
+  if (sameAmountCandidates.length === 0) return null;
+
+  // Se houver apenas 1 candidato com esse exato valor no mês
+  if (sameAmountCandidates.length === 1) {
+    return sameAmountCandidates[0];
+  }
+
+  // Critério 2: Data de Compra (se disponível no PDF)
+  if (item.date) {
+    const rawItemDate = item.date.replace(/[^\d]/g, '');
+    const dateCandidates = sameAmountCandidates.filter((e) => {
+      if (!e.purchase_date) return false;
+      const rawEDate = e.purchase_date.replace(/[^\d]/g, '');
+      return rawEDate.includes(rawItemDate) || rawItemDate.includes(rawEDate);
+    });
+
+    if (dateCandidates.length > 0) {
+      // Critério 3: Número de Prestação
+      const instMatch = dateCandidates.find(
+        (e) => e.installment_number === item.current_installment
+      );
+      if (instMatch) return instMatch;
+      return dateCandidates[0];
+    }
+  }
+
+  // Critério 3: Número de Prestação (Parcela)
+  const instCandidates = sameAmountCandidates.filter(
+    (e) => e.installment_number === item.current_installment
+  );
+
+  if (instCandidates.length > 0) {
+    const descMatch = instCandidates.find((e) =>
+      areDescriptionsSimilar(e.description, item.description)
+    );
+    return descMatch || instCandidates[0];
+  }
+
+  // Fallback por similaridade de nome com mesmo valor
+  const descCandidates = sameAmountCandidates.find((e) =>
+    areDescriptionsSimilar(e.description, item.description)
+  );
+  if (descCandidates) return descCandidates;
+
+  return null;
+}
+
+export interface InvoiceReconciliationResult {
+  matches: Array<{
+    existing: Installment;
+    extractedItem: ExtractedInvoiceData['items'][0];
+    nameChanged: boolean;
+  }>;
+  newItems: Array<ExtractedInvoiceData['items'][0]>;
+  unmatchedExisting: Array<Installment>;
+}
+
+/**
+ * Realiza o comparativo completo entre os itens da fatura enviada e os lançamentos existentes
+ */
+export function reconcileInvoiceItems(
+  extractedItems: ExtractedInvoiceData['items'],
+  existingInstallments: Installment[]
+): InvoiceReconciliationResult {
+  const matches: InvoiceReconciliationResult['matches'] = [];
+  const newItems: ExtractedInvoiceData['items'] = [];
+  const usedExistingIds = new Set<string>();
+
+  (extractedItems || []).forEach((item) => {
+    const available = existingInstallments.filter((e) => !usedExistingIds.has(e.id));
+    const match = findMatchingInstallment(item, available);
+
+    if (match) {
+      usedExistingIds.add(match.id);
+      const nameChanged =
+        (match.description || '').trim().toLowerCase() !== item.description.trim().toLowerCase();
+      matches.push({
+        existing: match,
+        extractedItem: item,
+        nameChanged,
+      });
+    } else {
+      newItems.push(item);
+    }
+  });
+
+  const unmatchedExisting = existingInstallments.filter((e) => !usedExistingIds.has(e.id));
+
+  return { matches, newItems, unmatchedExisting };
 }

@@ -10,7 +10,7 @@ import { EditPersonModal } from '@/components/EditPersonModal';
 import { EditInstallmentModal } from '@/components/EditInstallmentModal';
 import { UploadModal } from '@/components/UploadModal';
 import { SplitPurchaseModal } from '@/components/SplitPurchaseModal';
-import { findDuplicatesInInvoice, cleanInvoiceDuplicates, areDescriptionsSimilar } from '@/lib/deduplicate';
+import { findDuplicatesInInvoice, cleanInvoiceDuplicates, areDescriptionsSimilar, reconcileInvoiceItems } from '@/lib/deduplicate';
 
 export default function HomePage() {
   // Estado de Dados
@@ -366,7 +366,7 @@ export default function HomePage() {
     saveInstallments(updated);
   };
 
-  // 5. Importação Inteligente e Não-Destrutiva da Fatura (Preserva tudo o que já foi atribuído)
+  // 5. Importação Inteligente e Conciliação da Fatura (Preserva compradores e corrige nomes para os da fatura)
   const handleConfirmImport = (extracted: ExtractedInvoiceData) => {
     // 1. Atualiza valor total da fatura
     const newTotal = extracted.total_amount || 0;
@@ -379,39 +379,63 @@ export default function HomePage() {
     const existingInThisInvoice = installments.filter((i) => i.invoice_id === currentInvoice.id);
     const otherInvoicesInstallments = installments.filter((i) => i.invoice_id !== currentInvoice.id);
 
-    // Mantém todos os itens que você já lançou e atribuiu
-    const updatedInvoiceItems: Installment[] = [...existingInThisInvoice];
-    const newFutureInstallments: Installment[] = [];
-    let newItemsAddedCount = 0;
+    // Conciliação estrita com ordem de critérios:
+    // 1. Valor da Prestação -> 2. Data de Compra -> 3. Número de Prestação
+    const reconciliation = reconcileInvoiceItems(extracted.items || [], existingInThisInvoice);
 
-    extracted.items?.forEach((item, index) => {
-      // Verifica com rigor se este item já existe na fatura para NUNCA duplicar
-      const alreadyExists = existingInThisInvoice.find((existing) => {
-        const sameAmount = Math.abs(existing.amount - item.amount) < 0.05;
-        const sameInst = existing.installment_number === item.current_installment;
-        if (sameAmount && sameInst) {
-          if (areDescriptionsSimilar(existing.description || '', item.description || '')) {
-            return true;
-          }
-          if (existing.total_installments === item.total_installments) {
-            return true;
-          }
-        }
-        return false;
+    // Map para atualizar compras existentes com o nome oficial da fatura
+    const matchUpdates = new Map<string, { newDesc: string; newDate?: string }>();
+    const purchaseIdsToSyncName = new Set<string>();
+
+    reconciliation.matches.forEach((m) => {
+      matchUpdates.set(m.existing.id, {
+        newDesc: m.extractedItem.description,
+        newDate: m.extractedItem.date,
       });
-
-      if (alreadyExists) {
-        // Já existe! Preserva 100% dos dados e compradores
-        return;
+      if (m.existing.purchase_id) {
+        purchaseIdsToSyncName.add(m.existing.purchase_id);
       }
+    });
 
-      // É um item novo ou que estava faltando (ex: RV MAKES):
+    // Atualiza lançamentos existentes desta fatura:
+    // CORRIGE o nome do estabelecimento para o nome oficial da fatura,
+    // PRESERVANDO 100% dos compradores (person_id), parcelas e status
+    const updatedInvoiceItems: Installment[] = existingInThisInvoice.map((inst) => {
+      const update = matchUpdates.get(inst.id);
+      if (update) {
+        return {
+          ...inst,
+          description: update.newDesc,
+          purchase_date: update.newDate || inst.purchase_date,
+        };
+      }
+      return inst;
+    });
+
+    // Se a compra for parcelada, sincroniza o novo nome também nas parcelas futuras
+    const updatedOtherInstallments: Installment[] = otherInvoicesInstallments.map((inst) => {
+      if (inst.purchase_id && purchaseIdsToSyncName.has(inst.purchase_id)) {
+        const matched = reconciliation.matches.find((m) => m.existing.purchase_id === inst.purchase_id);
+        if (matched) {
+          return {
+            ...inst,
+            description: matched.extractedItem.description,
+          };
+        }
+      }
+      return inst;
+    });
+
+    // Insere apenas as compras que são genuinamente novas (não estavam no sistema)
+    const newFutureInstallments: Installment[] = [];
+
+    reconciliation.newItems.forEach((item, index) => {
       const purchaseId = `pur_${Date.now()}_${index}`;
       const newInst: Installment = {
         id: `inst_${Date.now()}_${index}`,
         invoice_id: currentInvoice.id,
         purchase_id: purchaseId,
-        person_id: null, // Deixa na Fila de Triagem para atribuição segura e consciente
+        person_id: null, // Vai para a Fila de Triagem para atribuição
         description: item.description,
         amount: item.amount,
         installment_number: item.current_installment,
@@ -421,7 +445,6 @@ export default function HomePage() {
       };
 
       updatedInvoiceItems.push(newInst);
-      newItemsAddedCount++;
 
       // Cria parcelas futuras se for parcelado
       if (item.total_installments > 1 && item.current_installment < item.total_installments) {
@@ -455,7 +478,7 @@ export default function HomePage() {
       [invoiceKey]: updatedInvoice,
     });
 
-    saveInstallments([...otherInvoicesInstallments, ...updatedInvoiceItems, ...newFutureInstallments]);
+    saveInstallments([...updatedOtherInstallments, ...updatedInvoiceItems, ...newFutureInstallments]);
   };
 
   // 6. Dividir Compra entre 2 ou mais pessoas
@@ -592,6 +615,7 @@ export default function HomePage() {
         month={currentMonth}
         year={currentYear}
         people={people}
+        existingInstallments={currentInstallments}
         isOpen={isUploadOpen}
         onClose={() => setIsUploadOpen(false)}
         onConfirmImport={handleConfirmImport}
