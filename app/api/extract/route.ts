@@ -121,7 +121,6 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
 
     for (const modelName of CANDIDATE_MODELS) {
       try {
-        // Limita cada tentativa a 7 segundos para nunca exceder o limite de 10s da Vercel Hobby
         const callPromise = ai.models.generateContent({
           model: modelName,
           contents,
@@ -130,8 +129,9 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido, sem crases de markdown e sem text
           },
         });
 
+        // Limite generoso de 45 segundos respeitando o maxDuration configurado no vercel.json
         const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('TIMEOUT_EXCEEDED')), 7000)
+          setTimeout(() => reject(new Error('TIMEOUT_EXCEEDED')), 45000)
         );
 
         response = await Promise.race([callPromise, timeoutPromise]);
