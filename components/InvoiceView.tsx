@@ -6,6 +6,7 @@ import {
   Menu,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   UploadCloud,
   Plus,
   Edit2,
@@ -88,6 +89,12 @@ export function InvoiceView({
   const [tempTotal, setTempTotal] = useState(String(invoice.total_bank_amount));
   const [selectedPersonFuture, setSelectedPersonFuture] = useState<Person | null>(null);
   const [showTrash, setShowTrash] = useState(false);
+  // Controla qual pessoa está expandida (apenas 1 permitida por vez, demais recolhidas)
+  const [expandedPersonId, setExpandedPersonId] = useState<string | null>(null);
+
+  const toggleExpandPerson = (personId: string) => {
+    setExpandedPersonId((prev) => (prev === personId ? null : personId));
+  };
 
   // 1. Agrupamento Unificado por Pessoa (mescla múltiplos cadastros com o mesmo nome)
   const personMapByName = new Map<string, { person: Person; allIds: Set<string> }>();
@@ -521,132 +528,171 @@ export function InvoiceView({
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {groupedByPerson.map((group) => (
-                <div
-                  key={group.person.id}
-                  className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4 flex flex-col justify-between"
-                >
-                  <div>
-                    {/* Header do Devedor */}
-                    <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                      <div className="flex items-center gap-2.5">
+            <div className="space-y-3">
+              {groupedByPerson.map((group) => {
+                const isExpanded = expandedPersonId === group.person.id;
+
+                return (
+                  <div
+                    key={group.person.id}
+                    className={`bg-slate-900 border rounded-2xl transition-all duration-200 overflow-hidden ${
+                      isExpanded
+                        ? 'border-indigo-500/50 shadow-lg shadow-indigo-950/20'
+                        : 'border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    {/* Header Clicável com a Seta de Expansão */}
+                    <div
+                      onClick={() => toggleExpandPerson(group.person.id)}
+                      className="p-4 sm:p-5 flex items-center justify-between gap-3 cursor-pointer select-none hover:bg-slate-850/40 transition"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
                         <span
-                          className="w-3.5 h-3.5 rounded-full ring-2 ring-slate-700"
+                          className="w-3.5 h-3.5 rounded-full ring-2 ring-slate-700 shrink-0"
                           style={{ backgroundColor: group.person.color || '#10B981' }}
                         />
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <h4 className="font-bold text-white text-base leading-tight">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-white text-base leading-tight truncate">
                               {group.person.name}
                             </h4>
                             <button
-                              onClick={() => onEditPerson(group.person)}
-                              className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditPerson(group.person);
+                              }}
+                              className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition shrink-0"
                               title="Editar dados deste devedor"
                             >
                               <Edit2 size={13} />
                             </button>
                           </div>
-                          {group.person.phone && (
-                            <p className="text-[11px] text-slate-400">
-                              Tel: {group.person.phone}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="text-right">
-                        <p className="text-xs text-slate-400">Total a pagar:</p>
-                        <p className="text-xl font-black text-emerald-400">
-                          {formatCurrency(group.total)}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Lista de Compras desta pessoa */}
-                    <div className="divide-y divide-slate-800/60 pt-2 space-y-1">
-                      {group.items.map((item) => (
-                        <div
-                          key={item.id}
-                          className="py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-850/40 rounded-lg px-2 -mx-2 transition"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <p className="font-medium text-white truncate">
-                              {item.description}
-                            </p>
-                            <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
-                              <span className="text-indigo-300 font-semibold">
-                                {item.total_installments > 1
-                                  ? `Parc. ${item.installment_number}/${item.total_installments}`
-                                  : 'À vista'}
-                              </span>
-                              {item.purchase_date && <span>• {item.purchase_date}</span>}
-                              {item.notes && <span>• <em>{item.notes}</em></span>}
-                            </p>
-                          </div>
-
-                          <div className="flex items-center gap-3 shrink-0">
-                            <span className="font-bold text-white text-sm">
-                              {formatCurrency(item.amount)}
+                          <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
+                            <span className="bg-slate-800 px-2 py-0.5 rounded-md text-[11px] font-medium text-slate-300">
+                              {group.items.length} {group.items.length === 1 ? 'gasto' : 'gastos'}
                             </span>
-                            <div className="flex items-center gap-1">
-                              {onUnassignDebtor && (
-                                <button
-                                  onClick={() => onUnassignDebtor(item.id)}
-                                  className="p-1 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded transition"
-                                  title="Lançou errado? Desvincular e mover de volta para a Fila de Triagem"
-                                >
-                                  <UserMinus size={13} />
-                                </button>
-                              )}
-                              <button
-                                onClick={() => onOpenSplitInstallment(item)}
-                                className="p-1 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded transition"
-                                title="Dividir / Rachar compra"
-                              >
-                                <Scissors size={13} />
-                              </button>
-                              <button
-                                onClick={() => onOpenEditInstallment(item)}
-                                className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded"
-                                title="Editar"
-                              >
-                                <Edit2 size={13} />
-                              </button>
-                              <button
-                                onClick={() => onDeleteInstallment(item.id)}
-                                className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded"
-                                title="Excluir"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
+                            {group.person.phone && (
+                              <span className="hidden sm:inline text-slate-400">
+                                • {group.person.phone}
+                              </span>
+                            )}
                           </div>
                         </div>
-                      ))}
+                      </div>
+
+                      <div className="flex items-center gap-3 sm:gap-4 shrink-0">
+                        <div className="text-right">
+                          <p className="text-[11px] text-slate-400">Total a pagar:</p>
+                          <p className="text-lg sm:text-xl font-black text-emerald-400">
+                            {formatCurrency(group.total)}
+                          </p>
+                        </div>
+
+                        {/* Seta para expandir / recolher gastos */}
+                        <div
+                          className={`p-2 rounded-xl bg-slate-800/80 border border-slate-750 text-slate-300 hover:text-white transition-all duration-200 ${
+                            isExpanded ? 'bg-indigo-600/20 border-indigo-500/40 text-indigo-300' : ''
+                          }`}
+                          title={isExpanded ? 'Recolher gastos' : 'Expandir gastos'}
+                        >
+                          <ChevronDown
+                            size={18}
+                            className={`transition-transform duration-200 ${
+                              isExpanded ? 'rotate-180 text-indigo-400' : 'text-slate-400'
+                            }`}
+                          />
+                        </div>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Rodapé do Card do Devedor: Botão WhatsApp e Projeção */}
-                  <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
-                    <button
-                      onClick={() => setSelectedPersonFuture(group.person)}
-                      className="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 transition"
-                    >
-                      <Clock size={13} /> Ver parcelas futuras
-                    </button>
+                    {/* Conteúdo Expandido: Visível APENAS quando isExpanded === true */}
+                    {isExpanded && (
+                      <div className="px-4 sm:px-5 pb-5 pt-2 border-t border-slate-800/80 space-y-4 animate-in fade-in duration-200">
+                        {/* Lista de Compras desta pessoa */}
+                        <div className="divide-y divide-slate-800/60 pt-1 space-y-1">
+                          {group.items.map((item) => (
+                            <div
+                              key={item.id}
+                              className="py-2.5 flex items-center justify-between gap-3 text-xs hover:bg-slate-850/40 rounded-lg px-2 -mx-2 transition"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="font-medium text-white truncate">
+                                  {item.description}
+                                </p>
+                                <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+                                  <span className="text-indigo-300 font-semibold">
+                                    {item.total_installments > 1
+                                      ? `Parc. ${item.installment_number}/${item.total_installments}`
+                                      : 'À vista'}
+                                  </span>
+                                  {item.purchase_date && <span>• {item.purchase_date}</span>}
+                                  {item.notes && <span>• <em>{item.notes}</em></span>}
+                                </p>
+                              </div>
 
-                    <button
-                      onClick={() => handleCopyWhatsApp(group)}
-                      className="px-3 py-1.5 bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
-                    >
-                      <MessageCircle size={14} />
-                      Cobrança WhatsApp
-                    </button>
+                              <div className="flex items-center gap-3 shrink-0">
+                                <span className="font-bold text-white text-sm">
+                                  {formatCurrency(item.amount)}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  {onUnassignDebtor && (
+                                    <button
+                                      onClick={() => onUnassignDebtor(item.id)}
+                                      className="p-1 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded transition"
+                                      title="Lançou errado? Desvincular e mover de volta para a Fila de Triagem"
+                                    >
+                                      <UserMinus size={13} />
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => onOpenSplitInstallment(item)}
+                                    className="p-1 text-slate-400 hover:text-indigo-400 hover:bg-slate-800 rounded transition"
+                                    title="Dividir / Rachar compra"
+                                  >
+                                    <Scissors size={13} />
+                                  </button>
+                                  <button
+                                    onClick={() => onOpenEditInstallment(item)}
+                                    className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded"
+                                    title="Editar"
+                                  >
+                                    <Edit2 size={13} />
+                                  </button>
+                                  <button
+                                    onClick={() => onDeleteInstallment(item.id)}
+                                    className="p-1 text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 rounded"
+                                    title="Excluir"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Rodapé do Card do Devedor: Botão WhatsApp e Projeção */}
+                        <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-2">
+                          <button
+                            onClick={() => setSelectedPersonFuture(group.person)}
+                            className="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 transition"
+                          >
+                            <Clock size={13} /> Ver parcelas futuras
+                          </button>
+
+                          <button
+                            onClick={() => handleCopyWhatsApp(group)}
+                            className="px-3.5 py-1.5 bg-emerald-600/15 hover:bg-emerald-600/25 text-emerald-400 border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition"
+                          >
+                            <MessageCircle size={14} />
+                            Cobrança WhatsApp
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
