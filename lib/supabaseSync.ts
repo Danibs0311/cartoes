@@ -127,27 +127,20 @@ export async function fetchCloudData(): Promise<{
       invoices[`${inv.card_id}_${inv.year}_${inv.month}`] = invObj;
     });
 
-    // Deduplicação estrita baseada em IDs reais para nunca descartar compras legítimas de mesmo valor
+    // Deduplicação estrita por ID único para garantir que compras divididas (splits) apareçam integralmente para todos os devedores
     const seenInstIds = new Set<string>();
-    const seenPurchaseInst = new Set<string>();
     const installments: Installment[] = [];
 
     (installmentsRes.data || []).forEach((inst: any) => {
       if (seenInstIds.has(inst.id)) return;
       seenInstIds.add(inst.id);
 
-      if (inst.purchase_id) {
-        const purKey = `${inst.purchase_id}_${inst.installment_number}`;
-        if (seenPurchaseInst.has(purKey)) return;
-        seenPurchaseInst.add(purKey);
-      }
-
       const pur = Array.isArray(inst.purchase) ? inst.purchase[0] : inst.purchase;
       installments.push({
         id: inst.id,
         invoice_id: inst.invoice_id,
         purchase_id: inst.purchase_id,
-        person_id: inst.person_id || null,
+        person_id: inst.person_id || null, // Cada parcela/fatia tem seu devedor próprio; nunca usar fallback da compra inteira
         installment_number: inst.installment_number || 1,
         total_installments: inst.total_installments || 1,
         amount: Number(inst.amount || 0),

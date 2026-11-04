@@ -248,22 +248,14 @@ export default function HomePage() {
       (existingInvoice && i.invoice_id === existingInvoice.id)
   );
 
-  // Garante integridade: desduplica apenas se for exatamente o mesmo ID ou mesmo purchase_id + parcela
+  // Garante integridade: desduplica estritamente por ID único sem descartar compras divididas
   const currentInstallments = React.useMemo(() => {
     const seenIds = new Set<string>();
-    const seenPurchaseInst = new Set<string>();
     const result: Installment[] = [];
 
     rawCurrentInstallments.forEach((i) => {
       if (seenIds.has(i.id)) return;
       seenIds.add(i.id);
-
-      if (i.purchase_id && i.purchase_id.length > 20) {
-        const purKey = `${i.purchase_id}_${i.installment_number}`;
-        if (seenPurchaseInst.has(purKey)) return;
-        seenPurchaseInst.add(purKey);
-      }
-
       result.push(i);
     });
     return result;
@@ -385,12 +377,28 @@ export default function HomePage() {
     const target = installments.find((i) => i.id === installmentId);
     if (!target) return;
 
-    // Atualização otimista imediata
+    // Detecta se esta parcela faz parte de uma compra dividida (múltiplas pessoas na mesma compra)
+    const isSplitBrother =
+      target.purchase_id &&
+      installments.some(
+        (other) =>
+          other.purchase_id === target.purchase_id &&
+          other.installment_number === target.installment_number &&
+          other.id !== target.id
+      );
+
+    // Atualização otimista imediata: nunca altera o devedor da outra pessoa na compra dividida
     const updated = installments.map((i) => {
       if (i.id === installmentId) {
         return { ...i, person_id: personId };
       }
-      if (i.purchase_id && i.purchase_id === target.purchase_id) {
+      // Se não for compra dividida, propaga para parcelas futuras da mesma compra
+      if (
+        !isSplitBrother &&
+        i.purchase_id &&
+        i.purchase_id === target.purchase_id &&
+        i.installment_number > target.installment_number
+      ) {
         return { ...i, person_id: personId };
       }
       return i;
