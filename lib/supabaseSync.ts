@@ -627,8 +627,10 @@ export async function migrateLocalStorageToCloud(
         cloudCardId = localCardIdToCloudId.get(localCId) || '';
       }
 
-      if (!cloudCardId && cloudCards && cloudCards.length > 0) {
-        cloudCardId = cloudCards[0].id;
+      if (!cloudCardId || cloudCardId.length < 20) {
+        if (cloudCards && cloudCards.length > 0) {
+          cloudCardId = cloudCards[0].id;
+        }
       }
 
       const assignedCloudPersonId = first.person_id
@@ -653,7 +655,28 @@ export async function migrateLocalStorageToCloud(
       if (!purData) continue;
 
       for (const inst of insts) {
-        let invId = invoiceKeyToCloudId.get(inst.invoice_id) || inst.invoice_id;
+        let invId = invoiceKeyToCloudId.get(inst.invoice_id);
+
+        if (!invId) {
+          const invParts = inst.invoice_id.split('_');
+          if (invParts.length === 3) {
+            const lCId = invParts[0];
+            const y = parseInt(invParts[1], 10) || 2026;
+            const m = parseInt(invParts[2], 10) || 4;
+            const targetCId = localCardIdToCloudId.get(lCId) || cloudCardId;
+            invId = (await getOrCreateCloudInvoice(targetCId, m, y)) || undefined;
+            if (invId) {
+              invoiceKeyToCloudId.set(inst.invoice_id, invId);
+            }
+          }
+        }
+
+        if (!invId) {
+          invId = (await getOrCreateCloudInvoice(cloudCardId, 4, 2026)) || undefined;
+        }
+
+        if (!invId) continue;
+
         const pId = inst.person_id ? personLocalIdToCloudId.get(inst.person_id) || null : null;
 
         await supabase.from('installments').insert({
