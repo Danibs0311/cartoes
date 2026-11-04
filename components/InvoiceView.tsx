@@ -50,6 +50,7 @@ interface InvoiceViewProps {
   onUnassignDebtor?: (installmentId: string) => void;
   duplicateCount?: number;
   onCleanDuplicates?: () => void;
+  onClearInvoicePurchases?: () => void;
 }
 
 const MONTH_NAMES = [
@@ -81,6 +82,7 @@ export function InvoiceView({
   onUnassignDebtor,
   duplicateCount = 0,
   onCleanDuplicates,
+  onClearInvoicePurchases,
 }: InvoiceViewProps) {
   const [editingTotal, setEditingTotal] = useState(false);
   const [tempTotal, setTempTotal] = useState(String(invoice.total_bank_amount));
@@ -229,6 +231,16 @@ export function InvoiceView({
             <UploadCloud size={16} />
             <span className="hidden sm:inline">Upload</span> Fatura (PDF)
           </button>
+          {installments.length > 0 && onClearInvoicePurchases && (
+            <button
+              onClick={onClearInvoicePurchases}
+              className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 hover:text-white border border-rose-500/30 text-xs sm:text-sm font-medium rounded-xl flex items-center gap-1.5 transition"
+              title="Apagar todas as compras identificadas desta fatura"
+            >
+              <Trash2 size={15} className="text-rose-400" />
+              <span className="hidden md:inline">Limpar Compras</span> ({installments.length})
+            </button>
+          )}
         </div>
       </header>
 

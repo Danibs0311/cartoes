@@ -161,6 +161,24 @@ export default function HomePage() {
     }
   };
 
+  const handleClearCurrentInvoicePurchases = () => {
+    const count = currentInstallments.length;
+    if (count === 0) {
+      alert('Não há compras registradas nesta fatura para limpar.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `⚠️ Tem certeza que deseja apagar TODAS as ${count} compras identificadas desta fatura do cartão "${activeCard.name}" (${currentMonth.toString().padStart(2, '0')}/${currentYear})?\n\nIsso zerará as compras desta fatura para você recomeçar limpo.`
+    );
+
+    if (confirmed) {
+      const remaining = installments.filter((i) => i.invoice_id !== currentInvoice.id);
+      saveInstallments(remaining);
+      alert('✅ Todas as compras desta fatura foram limpas com sucesso!');
+    }
+  };
+
   // Navegação Mês a Mês
   const handleChangeMonth = (delta: number) => {
     let nextM = currentMonth + delta;
@@ -512,6 +530,7 @@ export default function HomePage() {
           onUnassignDebtor={handleUnassignDebtor}
           duplicateCount={duplicateCount}
           onCleanDuplicates={handleCleanDuplicates}
+          onClearInvoicePurchases={handleClearCurrentInvoicePurchases}
         />
       </div>
 
