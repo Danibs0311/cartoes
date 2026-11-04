@@ -127,31 +127,35 @@ export async function fetchCloudData(): Promise<{
       invoices[`${inv.card_id}_${inv.year}_${inv.month}`] = invObj;
     });
 
-    // Deduplicação estrita em memória para garantir consistência perfeita de valores
-    const seenKeys = new Set<string>();
+    // Deduplicação estrita baseada em IDs reais para nunca descartar compras legítimas de mesmo valor
+    const seenInstIds = new Set<string>();
+    const seenPurchaseInst = new Set<string>();
     const installments: Installment[] = [];
 
     (installmentsRes.data || []).forEach((inst: any) => {
-      const pur = Array.isArray(inst.purchase) ? inst.purchase[0] : inst.purchase;
-      const desc = (pur?.description || 'Compra').trim().toLowerCase();
-      const dedupKey = `${inst.invoice_id}|${inst.installment_number}|${Number(inst.amount).toFixed(2)}|${desc}`;
+      if (seenInstIds.has(inst.id)) return;
+      seenInstIds.add(inst.id);
 
-      if (!seenKeys.has(dedupKey)) {
-        seenKeys.add(dedupKey);
-        installments.push({
-          id: inst.id,
-          invoice_id: inst.invoice_id,
-          purchase_id: inst.purchase_id,
-          person_id: inst.person_id || null,
-          installment_number: inst.installment_number || 1,
-          total_installments: inst.total_installments || 1,
-          amount: Number(inst.amount || 0),
-          status: inst.status || 'pendente',
-          notes: inst.notes || undefined,
-          description: pur?.description || 'Compra',
-          purchase_date: pur?.purchase_date || undefined,
-        });
+      if (inst.purchase_id) {
+        const purKey = `${inst.purchase_id}_${inst.installment_number}`;
+        if (seenPurchaseInst.has(purKey)) return;
+        seenPurchaseInst.add(purKey);
       }
+
+      const pur = Array.isArray(inst.purchase) ? inst.purchase[0] : inst.purchase;
+      installments.push({
+        id: inst.id,
+        invoice_id: inst.invoice_id,
+        purchase_id: inst.purchase_id,
+        person_id: inst.person_id || null,
+        installment_number: inst.installment_number || 1,
+        total_installments: inst.total_installments || 1,
+        amount: Number(inst.amount || 0),
+        status: inst.status || 'pendente',
+        notes: inst.notes || undefined,
+        description: pur?.description || 'Compra',
+        purchase_date: pur?.purchase_date || undefined,
+      });
     });
 
     return { cards, people, invoices, installments };

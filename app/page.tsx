@@ -248,17 +248,23 @@ export default function HomePage() {
       (existingInvoice && i.invoice_id === existingInvoice.id)
   );
 
-  // Garante 100% de consistência: nunca duplica nenhuma compra na tela!
+  // Garante integridade: desduplica apenas se for exatamente o mesmo ID ou mesmo purchase_id + parcela
   const currentInstallments = React.useMemo(() => {
-    const seen = new Set<string>();
+    const seenIds = new Set<string>();
+    const seenPurchaseInst = new Set<string>();
     const result: Installment[] = [];
+
     rawCurrentInstallments.forEach((i) => {
-      const desc = (i.description || '').trim().toLowerCase();
-      const key = `${i.installment_number}_${i.amount.toFixed(2)}_${desc}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push(i);
+      if (seenIds.has(i.id)) return;
+      seenIds.add(i.id);
+
+      if (i.purchase_id && i.purchase_id.length > 20) {
+        const purKey = `${i.purchase_id}_${i.installment_number}`;
+        if (seenPurchaseInst.has(purKey)) return;
+        seenPurchaseInst.add(purKey);
       }
+
+      result.push(i);
     });
     return result;
   }, [rawCurrentInstallments]);
