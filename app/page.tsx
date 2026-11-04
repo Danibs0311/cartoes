@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { CreditCard, Person, Invoice, Installment, ExtractedInvoiceData } from '@/lib/types';
 import { INITIAL_CARDS, INITIAL_PEOPLE, calculateInvoiceStatus } from '@/lib/storage';
 import { Sidebar } from '@/components/Sidebar';
@@ -10,13 +10,35 @@ import { EditPersonModal } from '@/components/EditPersonModal';
 import { EditInstallmentModal } from '@/components/EditInstallmentModal';
 import { UploadModal } from '@/components/UploadModal';
 import { SplitPurchaseModal } from '@/components/SplitPurchaseModal';
-import { findDuplicatesInInvoice, cleanInvoiceDuplicates, areDescriptionsSimilar, reconcileInvoiceItems } from '@/lib/deduplicate';
+import {
+  findDuplicatesInInvoice,
+  cleanInvoiceDuplicates,
+  reconcileInvoiceItems,
+} from '@/lib/deduplicate';
+import {
+  fetchCloudData,
+  cloudSaveCard,
+  cloudSavePerson,
+  cloudDeletePerson,
+  cloudUpdateInvoice,
+  cloudSaveInstallment,
+  cloudDeleteInstallment,
+  cloudAssignDebtor,
+  cloudUpdateInstallmentStatus,
+  cloudSyncImportInvoice,
+  subscribeToCloudChanges,
+  migrateLocalStorageToCloud,
+  getOrCreateCloudInvoice,
+} from '@/lib/supabaseSync';
 
 export default function HomePage() {
   // Estado de Dados
   const [cards, setCards] = useState<CreditCard[]>(INITIAL_CARDS);
   const [people, setPeople] = useState<Person[]>(INITIAL_PEOPLE);
   const [selectedCardId, setSelectedCardId] = useState<string>(INITIAL_CARDS[0].id);
+
+  // Status de Sincronização em Nuvem (Supabase)
+  const [syncStatus, setSyncStatus] = useState<'online' | 'connecting' | 'offline'>('connecting');
 
   // Mês e Ano de Competência Selecionado
   const today = new Date();
@@ -51,64 +73,116 @@ export default function HomePage() {
   const [deletedInstallments, setDeletedInstallments] = useState<Installment[]>([]);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
 
-  // Carregar dados salvos do LocalStorage na inicialização com Deduplicação Segura
+  // Ref para evitar loops ou condições de corrida durante sincronização
+  const isSyncingRef = useRef(false);
+
+  // 1. CARREGAMENTO INICIAL (OFFLINE-FIRST + SINCRONIZAÇÃO EM NUVEM)
   useEffect(() => {
+    // Carrega instantaneamente do LocalStorage (0 ms de espera na interface)
     try {
       const savedCards = localStorage.getItem('dgtech_cards');
       if (savedCards) setCards(JSON.parse(savedCards));
 
-      let currentPeople = INITIAL_PEOPLE;
       const savedPeople = localStorage.getItem('dgtech_people');
-      if (savedPeople) currentPeople = JSON.parse(savedPeople);
-
-      let currentInstallments: Installment[] = [];
-      const savedInstallments = localStorage.getItem('dgtech_installments');
-      if (savedInstallments) currentInstallments = JSON.parse(savedInstallments);
+      if (savedPeople) setPeople(JSON.parse(savedPeople));
 
       const savedInvoices = localStorage.getItem('dgtech_invoices');
       if (savedInvoices) setInvoices(JSON.parse(savedInvoices));
 
+      const savedInstallments = localStorage.getItem('dgtech_installments');
+      if (savedInstallments) setInstallments(JSON.parse(savedInstallments));
+
       const savedDeleted = localStorage.getItem('dgtech_deleted_installments');
       if (savedDeleted) setDeletedInstallments(JSON.parse(savedDeleted));
-
-      // DEDUPLICAÇÃO INTELIGENTE E NÃO-DESTRUTIVA DE PESSOAS COM NOMES REPETIDOS
-      const seenNames = new Map<string, Person>();
-      const uniquePeopleList: Person[] = [];
-      const idRedirectMap = new Map<string, string>();
-
-      currentPeople.forEach((p) => {
-        const norm = p.name.trim().toLowerCase();
-        if (!seenNames.has(norm)) {
-          seenNames.set(norm, p);
-          uniquePeopleList.push(p);
-        } else {
-          // Pessoa duplicada encontrada! Redireciona compras para o ID original
-          const canonical = seenNames.get(norm)!;
-          idRedirectMap.set(p.id, canonical.id);
-        }
-      });
-
-      // Se havia cadastros duplicados do mesmo comprador, unifica as parcelas sem perder nenhuma
-      if (idRedirectMap.size > 0) {
-        currentInstallments = currentInstallments.map((inst) => {
-          if (inst.person_id && idRedirectMap.has(inst.person_id)) {
-            return { ...inst, person_id: idRedirectMap.get(inst.person_id)! };
-          }
-          return inst;
-        });
-        currentPeople = uniquePeopleList;
-        localStorage.setItem('dgtech_people', JSON.stringify(currentPeople));
-        localStorage.setItem('dgtech_installments', JSON.stringify(currentInstallments));
-      }
-
-      setPeople(currentPeople);
-      setInstallments(currentInstallments);
     } catch (e) {
       console.error('Erro ao ler localStorage', e);
     }
+
+    // Função de sincronização com o Supabase
+    const loadFromCloud = async () => {
+      if (isSyncingRef.current) return;
+      isSyncingRef.current = true;
+
+      try {
+        const cloudData = await fetchCloudData();
+
+        if (!cloudData) {
+          setSyncStatus('offline');
+          isSyncingRef.current = false;
+          return;
+        }
+
+        // Verifica se o Supabase ainda está vazio, mas o localStorage já tinha dados
+        const localInstallmentsRaw = localStorage.getItem('dgtech_installments');
+        const localPeopleRaw = localStorage.getItem('dgtech_people');
+        const localInstallments = localInstallmentsRaw ? JSON.parse(localInstallmentsRaw) : [];
+        const localPeople = localPeopleRaw ? JSON.parse(localPeopleRaw) : [];
+
+        if (cloudData.installments.length === 0 && (localInstallments.length > 0 || localPeople.length > 0)) {
+          console.log('⚡ Migrando dados existentes do LocalStorage para o Supabase...');
+          const localCardsRaw = localStorage.getItem('dgtech_cards');
+          const localInvoicesRaw = localStorage.getItem('dgtech_invoices');
+          await migrateLocalStorageToCloud(
+            localCardsRaw ? JSON.parse(localCardsRaw) : INITIAL_CARDS,
+            localPeople.length > 0 ? localPeople : INITIAL_PEOPLE,
+            localInvoicesRaw ? JSON.parse(localInvoicesRaw) : {},
+            localInstallments
+          );
+
+          const reloaded = await fetchCloudData();
+          if (reloaded) {
+            applyCloudData(reloaded);
+            isSyncingRef.current = false;
+            return;
+          }
+        }
+
+        applyCloudData(cloudData);
+      } catch (err) {
+        console.error('Falha ao conectar na nuvem:', err);
+        setSyncStatus('offline');
+      } finally {
+        isSyncingRef.current = false;
+      }
+    };
+
+    const applyCloudData = (data: {
+      cards: CreditCard[];
+      people: Person[];
+      invoices: Record<string, Invoice>;
+      installments: Installment[];
+    }) => {
+      if (data.cards.length > 0) {
+        setCards(data.cards);
+        localStorage.setItem('dgtech_cards', JSON.stringify(data.cards));
+      }
+      if (data.people.length > 0) {
+        setPeople(data.people);
+        localStorage.setItem('dgtech_people', JSON.stringify(data.people));
+      }
+      setInvoices(data.invoices);
+      localStorage.setItem('dgtech_invoices', JSON.stringify(data.invoices));
+      setInstallments(data.installments);
+      localStorage.setItem('dgtech_installments', JSON.stringify(data.installments));
+      setSyncStatus('online');
+    };
+
+    // Executa busca na nuvem
+    loadFromCloud();
+
+    // 2. ASSINATURA EM TEMPO REAL (SUPABASE REALTIME)
+    // Atualiza automaticamente quando houver alterações de outro celular/computador
+    const unsubscribe = subscribeToCloudChanges(() => {
+      console.log('🔄 Atualização remota recebida do Supabase! Sincronizando tela...');
+      loadFromCloud();
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
-  // Salvar no LocalStorage sempre que houver alteração
+  // Helpers de persistência LocalStorage
   const saveCards = (newCards: CreditCard[]) => {
     setCards(newCards);
     localStorage.setItem('dgtech_cards', JSON.stringify(newCards));
@@ -134,7 +208,7 @@ export default function HomePage() {
 
   // Chave única para a fatura do cartão no mês/ano
   const invoiceKey = `${activeCard.id}_${currentYear}_${currentMonth}`;
-  const existingInvoice = invoices[invoiceKey];
+  const existingInvoice = invoices[invoiceKey] || invoices[activeCard.id];
 
   // Calcula o status da fatura dinamicamente com base no Melhor Dia de Compras
   const computedStatus = calculateInvoiceStatus(
@@ -145,7 +219,7 @@ export default function HomePage() {
   );
 
   const currentInvoice: Invoice = {
-    id: invoiceKey,
+    id: existingInvoice?.id || invoiceKey,
     card_id: activeCard.id,
     month: currentMonth,
     year: currentYear,
@@ -155,8 +229,13 @@ export default function HomePage() {
     notes: existingInvoice?.notes,
   };
 
-  // Lançamentos da fatura atual
-  const currentInstallments = installments.filter((i) => i.invoice_id === currentInvoice.id);
+  // Lançamentos da fatura atual (suporta tanto UUID do Supabase quanto chave composta)
+  const currentInstallments = installments.filter(
+    (i) =>
+      i.invoice_id === currentInvoice.id ||
+      i.invoice_id === invoiceKey ||
+      (existingInvoice && i.invoice_id === existingInvoice.id)
+  );
 
   // Detecção inteligente de compras duplicadas na fatura atual
   const { duplicateIdsToRemove } = findDuplicatesInInvoice(currentInstallments);
@@ -169,7 +248,11 @@ export default function HomePage() {
     );
     if (removedCount > 0) {
       saveInstallments(cleanedInstallments);
-      alert(`🎉 Sucesso! ${removedCount} compra(s) duplicada(s) removida(s). Os valores dos compradores foram recalculados e normalizados.`);
+      // Apaga duplicatas do Supabase
+      duplicateIdsToRemove.forEach((id) => cloudDeleteInstallment(id));
+      alert(
+        `🎉 Sucesso! ${removedCount} compra(s) duplicada(s) removida(s). Os valores foram normalizados e sincronizados.`
+      );
     }
   };
 
@@ -185,9 +268,16 @@ export default function HomePage() {
     );
 
     if (confirmed) {
-      const remaining = installments.filter((i) => i.invoice_id !== currentInvoice.id);
+      // Remove do Supabase
+      currentInstallments.forEach((inst) => cloudDeleteInstallment(inst.id));
+      const remaining = installments.filter(
+        (i) =>
+          i.invoice_id !== currentInvoice.id &&
+          i.invoice_id !== invoiceKey &&
+          (!existingInvoice || i.invoice_id !== existingInvoice.id)
+      );
       saveInstallments(remaining);
-      alert('✅ Todas as compras desta fatura foram limpas com sucesso!');
+      alert('✅ Todas as compras desta fatura foram limpas com sucesso na nuvem!');
     }
   };
 
@@ -206,17 +296,17 @@ export default function HomePage() {
     setCurrentYear(nextY);
   };
 
-  // 1. Edição e Salvamento de Cartão
-  const handleSaveCard = (updatedCard: CreditCard) => {
+  // 1. Edição e Salvamento de Cartão (Local + Nuvem)
+  const handleSaveCard = async (updatedCard: CreditCard) => {
     const exists = cards.some((c) => c.id === updatedCard.id);
     let nextCards: CreditCard[];
     if (exists) {
       nextCards = cards.map((c) => (c.id === updatedCard.id ? updatedCard : c));
     } else {
       nextCards = [...cards, updatedCard];
-      setSelectedCardId(updatedCard.id);
     }
     saveCards(nextCards);
+    await cloudSaveCard(updatedCard);
   };
 
   const handleDeleteCard = (cardId: string) => {
@@ -227,8 +317,8 @@ export default function HomePage() {
     }
   };
 
-  // 2. Atualizar Valor Total da Fatura do Banco
-  const handleUpdateInvoiceTotal = (newTotal: number) => {
+  // 2. Atualizar Valor Total da Fatura do Banco (Local + Nuvem)
+  const handleUpdateInvoiceTotal = async (newTotal: number) => {
     const updatedInvoice: Invoice = {
       ...currentInvoice,
       total_bank_amount: newTotal,
@@ -236,10 +326,14 @@ export default function HomePage() {
     saveInvoices({
       ...invoices,
       [invoiceKey]: updatedInvoice,
+      [currentInvoice.id]: updatedInvoice,
+    });
+    await cloudUpdateInvoice(activeCard.id, currentMonth, currentYear, {
+      total_bank_amount: newTotal,
     });
   };
 
-  const handleUpdateInvoiceStatus = (newStatus: 'aberta' | 'fechada' | 'paga') => {
+  const handleUpdateInvoiceStatus = async (newStatus: 'aberta' | 'fechada' | 'paga') => {
     const updatedInvoice: Invoice = {
       ...currentInvoice,
       status: newStatus,
@@ -247,20 +341,23 @@ export default function HomePage() {
     saveInvoices({
       ...invoices,
       [invoiceKey]: updatedInvoice,
+      [currentInvoice.id]: updatedInvoice,
+    });
+    await cloudUpdateInvoice(activeCard.id, currentMonth, currentYear, {
+      status: newStatus,
     });
   };
 
-  // 3. Atribuir Comprador na Triagem (com memória para futuras parcelas)
-  const handleAssignDebtor = (installmentId: string, personId: string) => {
+  // 3. Atribuir Comprador na Triagem (Local + Nuvem em Tempo Real)
+  const handleAssignDebtor = async (installmentId: string, personId: string) => {
     const target = installments.find((i) => i.id === installmentId);
     if (!target) return;
 
-    // Atualiza esta parcela
+    // Atualização otimista imediata
     const updated = installments.map((i) => {
       if (i.id === installmentId) {
         return { ...i, person_id: personId };
       }
-      // Se for a mesma compra em faturas futuras, vincula também
       if (i.purchase_id && i.purchase_id === target.purchase_id) {
         return { ...i, person_id: personId };
       }
@@ -268,10 +365,21 @@ export default function HomePage() {
     });
 
     saveInstallments(updated);
+
+    // Salva na nuvem
+    await cloudAssignDebtor(installmentId, personId);
   };
 
-  // 4. Salvar ou Adicionar Lançamento Manual / Edição
-  const handleSaveInstallment = (data: Partial<Installment>) => {
+  const handleUnassignDebtor = async (installmentId: string) => {
+    const updated = installments.map((i) =>
+      i.id === installmentId ? { ...i, person_id: null } : i
+    );
+    saveInstallments(updated);
+    await cloudAssignDebtor(installmentId, null);
+  };
+
+  // 4. Salvar ou Adicionar Lançamento Manual / Edição (Local + Nuvem)
+  const handleSaveInstallment = async (data: Partial<Installment>) => {
     if (data.id) {
       // Edição
       const updated = installments.map((i) =>
@@ -289,6 +397,11 @@ export default function HomePage() {
           : i
       );
       saveInstallments(updated);
+
+      const targetInst = updated.find((i) => i.id === data.id);
+      if (targetInst) {
+        await cloudSaveInstallment(targetInst, activeCard.id, currentMonth, currentYear);
+      }
     } else {
       // Novo Lançamento
       const newInstId = 'inst_' + Date.now();
@@ -307,7 +420,6 @@ export default function HomePage() {
         notes: data.notes,
       };
 
-      // Cria parcelas futuras automaticamente se for parcelado!
       const futureInstallments: Installment[] = [];
       if (newInst.total_installments > 1 && newInst.installment_number < newInst.total_installments) {
         const remaining = newInst.total_installments - newInst.installment_number;
@@ -336,10 +448,11 @@ export default function HomePage() {
       }
 
       saveInstallments([...installments, newInst, ...futureInstallments]);
+      await cloudSaveInstallment(newInst, activeCard.id, currentMonth, currentYear);
     }
   };
 
-  const handleDeleteInstallment = (id: string) => {
+  const handleDeleteInstallment = async (id: string) => {
     const target = installments.find((i) => i.id === id);
     if (target) {
       const updatedDeleted = [target, ...deletedInstallments];
@@ -347,43 +460,48 @@ export default function HomePage() {
       localStorage.setItem('dgtech_deleted_installments', JSON.stringify(updatedDeleted));
     }
     saveInstallments(installments.filter((i) => i.id !== id));
+    await cloudDeleteInstallment(id);
   };
 
-  const handleRestoreInstallment = (id: string) => {
+  const handleRestoreInstallment = async (id: string) => {
     const target = deletedInstallments.find((i) => i.id === id);
     if (target) {
       const remainingDeleted = deletedInstallments.filter((i) => i.id !== id);
       setDeletedInstallments(remainingDeleted);
       localStorage.setItem('dgtech_deleted_installments', JSON.stringify(remainingDeleted));
       saveInstallments([...installments, target]);
+      await cloudSaveInstallment(target, activeCard.id, currentMonth, currentYear);
     }
   };
 
-  const handleUnassignDebtor = (installmentId: string) => {
-    const updated = installments.map((i) =>
-      i.id === installmentId ? { ...i, person_id: null } : i
-    );
-    saveInstallments(updated);
+  // 5. Salvar Pessoas / Devedores (Local + Nuvem)
+  const handleSavePeople = async (updatedPeople: Person[]) => {
+    savePeople(updatedPeople);
+    for (const p of updatedPeople) {
+      await cloudSavePerson(p);
+    }
   };
 
-  // 5. Importação Inteligente e Conciliação da Fatura (Preserva compradores e corrige nomes para os da fatura)
-  const handleConfirmImport = (extracted: ExtractedInvoiceData) => {
-    // 1. Atualiza valor total da fatura
+  // 6. Importação Inteligente e Conciliação da Fatura (Local + Nuvem em Tempo Real)
+  const handleConfirmImport = async (extracted: ExtractedInvoiceData) => {
     const newTotal = extracted.total_amount || 0;
     const updatedInvoice: Invoice = {
       ...currentInvoice,
       total_bank_amount: newTotal > 0 ? newTotal : currentInvoice.total_bank_amount,
     };
 
-    // 2. Itens já existentes nesta fatura e em outras faturas
-    const existingInThisInvoice = installments.filter((i) => i.invoice_id === currentInvoice.id);
-    const otherInvoicesInstallments = installments.filter((i) => i.invoice_id !== currentInvoice.id);
+    const existingInThisInvoice = currentInstallments;
+    const otherInvoicesInstallments = installments.filter(
+      (i) =>
+        i.invoice_id !== currentInvoice.id &&
+        i.invoice_id !== invoiceKey &&
+        (!existingInvoice || i.invoice_id !== existingInvoice.id)
+    );
 
     // Conciliação estrita com ordem de critérios:
     // 1. Valor da Prestação -> 2. Data de Compra -> 3. Número de Prestação
     const reconciliation = reconcileInvoiceItems(extracted.items || [], existingInThisInvoice);
 
-    // Map para atualizar compras existentes com o nome oficial da fatura
     const matchUpdates = new Map<string, { newDesc: string; newDate?: string }>();
     const purchaseIdsToSyncName = new Set<string>();
 
@@ -412,10 +530,12 @@ export default function HomePage() {
       return inst;
     });
 
-    // Se a compra for parcelada, sincroniza o novo nome também nas parcelas futuras
+    // Sincroniza o novo nome também nas parcelas futuras da mesma compra
     const updatedOtherInstallments: Installment[] = otherInvoicesInstallments.map((inst) => {
       if (inst.purchase_id && purchaseIdsToSyncName.has(inst.purchase_id)) {
-        const matched = reconciliation.matches.find((m) => m.existing.purchase_id === inst.purchase_id);
+        const matched = reconciliation.matches.find(
+          (m) => m.existing.purchase_id === inst.purchase_id
+        );
         if (matched) {
           return {
             ...inst,
@@ -426,16 +546,15 @@ export default function HomePage() {
       return inst;
     });
 
-    // Insere apenas as compras que são genuinamente novas (não estavam no sistema)
+    // Insere compras novas
     const newFutureInstallments: Installment[] = [];
-
     reconciliation.newItems.forEach((item, index) => {
       const purchaseId = `pur_${Date.now()}_${index}`;
       const newInst: Installment = {
         id: `inst_${Date.now()}_${index}`,
         invoice_id: currentInvoice.id,
         purchase_id: purchaseId,
-        person_id: null, // Vai para a Fila de Triagem para atribuição
+        person_id: null,
         description: item.description,
         amount: item.amount,
         installment_number: item.current_installment,
@@ -446,7 +565,6 @@ export default function HomePage() {
 
       updatedInvoiceItems.push(newInst);
 
-      // Cria parcelas futuras se for parcelado
       if (item.total_installments > 1 && item.current_installment < item.total_installments) {
         const remaining = item.total_installments - item.current_installment;
         for (let step = 1; step <= remaining; step++) {
@@ -473,16 +591,31 @@ export default function HomePage() {
       }
     });
 
+    // Salva localmente
     saveInvoices({
       ...invoices,
       [invoiceKey]: updatedInvoice,
+      [currentInvoice.id]: updatedInvoice,
     });
+    saveInstallments([
+      ...updatedOtherInstallments,
+      ...updatedInvoiceItems,
+      ...newFutureInstallments,
+    ]);
 
-    saveInstallments([...updatedOtherInstallments, ...updatedInvoiceItems, ...newFutureInstallments]);
+    // Salva na nuvem (Supabase)
+    await cloudSyncImportInvoice({
+      cardId: activeCard.id,
+      month: currentMonth,
+      year: currentYear,
+      totalAmount: newTotal,
+      matches: reconciliation.matches,
+      newItems: reconciliation.newItems,
+    });
   };
 
-  // 6. Dividir Compra entre 2 ou mais pessoas
-  const handleConfirmSplit = (
+  // 7. Dividir Compra entre 2 ou mais pessoas
+  const handleConfirmSplit = async (
     originalInstallment: Installment,
     splits: Array<{ person_id: string; amount: number; person_name: string }>,
     applyToFuture: boolean
@@ -533,11 +666,17 @@ export default function HomePage() {
     }
 
     saveInstallments([...updatedList, ...newFracionadas]);
+
+    // Sincroniza divisão na nuvem
+    await cloudDeleteInstallment(originalInstallment.id);
+    for (const f of newFracionadas) {
+      await cloudSaveInstallment(f, activeCard.id, currentMonth, currentYear);
+    }
   };
 
   return (
     <div className="flex h-screen w-full bg-slate-950 overflow-hidden">
-      {/* Sidebar com Menu Hambúrguer */}
+      {/* Sidebar com Menu Hambúrguer e Status da Nuvem */}
       <Sidebar
         cards={cards}
         selectedCardId={activeCard.id}
@@ -550,6 +689,7 @@ export default function HomePage() {
         onCloseMobile={() => setIsMobileMenuOpen(false)}
         currentMonth={currentMonth}
         currentYear={currentYear}
+        syncStatus={syncStatus}
       />
 
       {/* Área Principal do Cartão e Fatura */}
@@ -597,7 +737,7 @@ export default function HomePage() {
         isOpen={personModalData.isOpen}
         initialPerson={personModalData.person}
         onClose={() => setPersonModalData({ isOpen: false, person: null })}
-        onSavePeople={savePeople}
+        onSavePeople={handleSavePeople}
       />
 
       <EditInstallmentModal

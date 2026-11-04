@@ -17,6 +17,7 @@ interface SidebarProps {
   onCloseMobile: () => void;
   currentMonth?: number;
   currentYear?: number;
+  syncStatus?: 'online' | 'connecting' | 'offline';
 }
 
 export function Sidebar({
@@ -31,6 +32,7 @@ export function Sidebar({
   onCloseMobile,
   currentMonth,
   currentYear,
+  syncStatus = 'connecting',
 }: SidebarProps) {
   const [search, setSearch] = useState('');
 
@@ -205,7 +207,7 @@ export function Sidebar({
         </div>
 
         {/* Rodapé da Sidebar */}
-        <div className="p-3 border-t border-slate-800 bg-slate-950/40 space-y-1.5">
+        <div className="p-3 border-t border-slate-800 bg-slate-950/40 space-y-2">
           <button
             onClick={onOpenManagePeople}
             className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-slate-800/60 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium border border-slate-750 transition"
@@ -218,6 +220,31 @@ export function Sidebar({
               {people.length}
             </span>
           </button>
+
+          {/* Status de Sincronização em Nuvem em Tempo Real */}
+          <div className="flex items-center justify-between px-2 pt-1 text-[11px] text-slate-400">
+            <span className="flex items-center gap-1.5 font-medium">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  syncStatus === 'online'
+                    ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                    : syncStatus === 'connecting'
+                    ? 'bg-amber-400 animate-pulse'
+                    : 'bg-rose-500'
+                }`}
+              />
+              <span className={syncStatus === 'online' ? 'text-emerald-300' : syncStatus === 'connecting' ? 'text-amber-300' : 'text-slate-400'}>
+                {syncStatus === 'online'
+                  ? 'Nuvem Conectada (Tempo Real)'
+                  : syncStatus === 'connecting'
+                  ? 'Conectando à Nuvem...'
+                  : 'Modo Offline'}
+              </span>
+            </span>
+            <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded">
+              Supabase
+            </span>
+          </div>
         </div>
       </aside>
     </>
