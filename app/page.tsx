@@ -10,6 +10,7 @@ import { EditPersonModal } from '@/components/EditPersonModal';
 import { EditInstallmentModal } from '@/components/EditInstallmentModal';
 import { UploadModal } from '@/components/UploadModal';
 import { SplitPurchaseModal } from '@/components/SplitPurchaseModal';
+import { findDuplicatesInInvoice, cleanInvoiceDuplicates, areDescriptionsSimilar } from '@/lib/deduplicate';
 
 export default function HomePage() {
   // Estado de Dados
@@ -144,6 +145,21 @@ export default function HomePage() {
 
   // Lançamentos da fatura atual
   const currentInstallments = installments.filter((i) => i.invoice_id === currentInvoice.id);
+
+  // Detecção inteligente de compras duplicadas na fatura atual
+  const { duplicateIdsToRemove } = findDuplicatesInInvoice(currentInstallments);
+  const duplicateCount = duplicateIdsToRemove.size;
+
+  const handleCleanDuplicates = () => {
+    const { cleanedInstallments, removedCount } = cleanInvoiceDuplicates(
+      installments,
+      currentInvoice.id
+    );
+    if (removedCount > 0) {
+      saveInstallments(cleanedInstallments);
+      alert(`🎉 Sucesso! ${removedCount} compra(s) duplicada(s) removida(s). Os valores dos compradores foram recalculados e normalizados.`);
+    }
+  };
 
   // Navegação Mês a Mês
   const handleChangeMonth = (delta: number) => {
@@ -324,45 +340,73 @@ export default function HomePage() {
 
     // Mantém todos os itens que você já lançou e atribuiu
     const updatedInvoiceItems: Installment[] = [...existingInThisInvoice];
+    const newFutureInstallments: Installment[] = [];
     let newItemsAddedCount = 0;
 
     extracted.items?.forEach((item, index) => {
-      const cleanDesc = item.description.trim().toLowerCase();
-
-      // Verifica se este item já existe na fatura para NUNCA duplicar
+      // Verifica com rigor se este item já existe na fatura para NUNCA duplicar
       const alreadyExists = existingInThisInvoice.find((existing) => {
-        const existingDesc = (existing.description || '').trim().toLowerCase();
-        const sameDesc = existingDesc.includes(cleanDesc) || cleanDesc.includes(existingDesc);
         const sameAmount = Math.abs(existing.amount - item.amount) < 0.05;
         const sameInst = existing.installment_number === item.current_installment;
-        return (sameDesc && sameAmount && sameInst) || (sameDesc && sameAmount);
+        if (sameAmount && sameInst) {
+          if (areDescriptionsSimilar(existing.description || '', item.description || '')) {
+            return true;
+          }
+          if (existing.total_installments === item.total_installments) {
+            return true;
+          }
+        }
+        return false;
       });
 
       if (alreadyExists) {
-        // Já existe! Preserva 100% dos dados, do comprador atribuído e das divisões
+        // Já existe! Preserva 100% dos dados e compradores
         return;
       }
 
       // É um item novo ou que estava faltando (ex: RV MAKES):
-      // Tenta buscar no histórico se alguém já comprou nessa mesma loja
-      const historyMatch = installments.find(
-        (i) => i.person_id && (i.description || '').toLowerCase().includes(cleanDesc)
-      );
-
       const purchaseId = `pur_${Date.now()}_${index}`;
-      updatedInvoiceItems.push({
+      const newInst: Installment = {
         id: `inst_${Date.now()}_${index}`,
         invoice_id: currentInvoice.id,
         purchase_id: purchaseId,
-        person_id: historyMatch ? historyMatch.person_id : null,
+        person_id: null, // Deixa na Fila de Triagem para atribuição segura e consciente
         description: item.description,
         amount: item.amount,
         installment_number: item.current_installment,
         total_installments: item.total_installments,
         status: 'pendente',
         purchase_date: item.date || new Date().toISOString().slice(0, 10),
-      });
+      };
+
+      updatedInvoiceItems.push(newInst);
       newItemsAddedCount++;
+
+      // Cria parcelas futuras se for parcelado
+      if (item.total_installments > 1 && item.current_installment < item.total_installments) {
+        const remaining = item.total_installments - item.current_installment;
+        for (let step = 1; step <= remaining; step++) {
+          let futM = currentMonth + step;
+          let futY = currentYear;
+          while (futM > 12) {
+            futM -= 12;
+            futY += 1;
+          }
+          const futInvoiceKey = `${activeCard.id}_${futY}_${futM}`;
+          newFutureInstallments.push({
+            id: `inst_${Date.now()}_${index}_${step}`,
+            invoice_id: futInvoiceKey,
+            purchase_id: purchaseId,
+            person_id: null,
+            description: item.description,
+            amount: item.amount,
+            installment_number: item.current_installment + step,
+            total_installments: item.total_installments,
+            status: 'pendente',
+            purchase_date: item.date || new Date().toISOString().slice(0, 10),
+          });
+        }
+      }
     });
 
     saveInvoices({
@@ -370,7 +414,7 @@ export default function HomePage() {
       [invoiceKey]: updatedInvoice,
     });
 
-    saveInstallments([...otherInvoicesInstallments, ...updatedInvoiceItems]);
+    saveInstallments([...otherInvoicesInstallments, ...updatedInvoiceItems, ...newFutureInstallments]);
   };
 
   // 6. Dividir Compra entre 2 ou mais pessoas
@@ -466,6 +510,8 @@ export default function HomePage() {
           deletedInstallments={deletedInstallments}
           onRestoreInstallment={handleRestoreInstallment}
           onUnassignDebtor={handleUnassignDebtor}
+          duplicateCount={duplicateCount}
+          onCleanDuplicates={handleCleanDuplicates}
         />
       </div>
 

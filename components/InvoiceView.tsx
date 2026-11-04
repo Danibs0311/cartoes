@@ -48,6 +48,8 @@ interface InvoiceViewProps {
   deletedInstallments?: Installment[];
   onRestoreInstallment?: (id: string) => void;
   onUnassignDebtor?: (installmentId: string) => void;
+  duplicateCount?: number;
+  onCleanDuplicates?: () => void;
 }
 
 const MONTH_NAMES = [
@@ -77,6 +79,8 @@ export function InvoiceView({
   deletedInstallments = [],
   onRestoreInstallment,
   onUnassignDebtor,
+  duplicateCount = 0,
+  onCleanDuplicates,
 }: InvoiceViewProps) {
   const [editingTotal, setEditingTotal] = useState(false);
   const [tempTotal, setTempTotal] = useState(String(invoice.total_bank_amount));
@@ -260,6 +264,32 @@ export function InvoiceView({
             <ChevronRight size={18} />
           </button>
         </div>
+
+        {/* Banner de Duplicados Detectados */}
+        {duplicateCount > 0 && (
+          <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-200 animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="text-amber-400 shrink-0" size={24} />
+              <div>
+                <h4 className="font-bold text-amber-200 text-sm">
+                  {duplicateCount} {duplicateCount === 1 ? 'compra duplicada detectada' : 'compras duplicadas detectadas'} nesta fatura!
+                </h4>
+                <p className="text-xs text-amber-300/80 mt-0.5">
+                  Lançamentos repetidos elevaram a fatura e a dívida dos compradores. Clique ao lado para manter apenas 1 cópia de cada e restaurar os totais originais.
+                </p>
+              </div>
+            </div>
+            {onCleanDuplicates && (
+              <button
+                onClick={onCleanDuplicates}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-amber-500/20 transition shrink-0 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Scissors size={15} />
+                Remover Duplicados Agora
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Resumo Financeiro (KPIs) */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
